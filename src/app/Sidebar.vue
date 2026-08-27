@@ -1,7 +1,10 @@
 <template>
   <div class="sidebar-container elevated">
     <div class="sidebar-fixed d-none d-md-block">
-      <SidebarNav />
+      <div class="sidebar-scroll">
+        <SidebarNav />
+      </div>
+      <RadarSweep class="sidebar-radar" />
     </div>
     <div
       class="offcanvas offcanvas-start d-md-none"
@@ -18,11 +21,13 @@
 <script lang="ts">
   import { defineComponent } from 'vue'
   import SidebarNav from './SidebarNav.vue'
+  import RadarSweep from './RadarSweep.vue'
   import { useMainStore } from '@/shared/store'
 
   export default defineComponent({
     components: {
       SidebarNav,
+      RadarSweep,
     },
     setup() {
       return {
@@ -38,17 +43,28 @@
   }
 
   .sidebar-container .sidebar-fixed {
-    padding-bottom: 100px;
     width: 250px;
     position: sticky;
     top: 0;
-    max-height: 100vh;
-    overflow-y: scroll;
-    scrollbar-width: none;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
   }
 
-  .sidebar-container .sidebar-fixed::-webkit-scrollbar {
+  .sidebar-container .sidebar-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: scroll;
+    scrollbar-width: none;
+    padding-bottom: 1rem;
+  }
+
+  .sidebar-container .sidebar-scroll::-webkit-scrollbar {
     display: none;
+  }
+
+  .sidebar-container .sidebar-radar {
+    flex: 0 0 auto;
   }
 
   .sidebar-container .sidebar-brand {
@@ -68,6 +84,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    border: 1px solid var(--term-amber-dim, #cc5500);
+    margin-bottom: 4px;
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
   }
 
   .sidebar-container a.nav-link .icon {
@@ -79,13 +99,15 @@
   }
   .sidebar-container .nav-link:hover {
     color: inherit;
-    background-color: rgba(255, 255, 255, 0.045);
+    background-color: rgba(255, 122, 26, 0.08);
+    border-color: var(--term-amber, #ff7a1a);
   }
   .sidebar-container .nav-link.router-link-active {
-    color: var(--bs-primary);
-    background-color: rgba(255, 255, 255, 0.045);
+    color: var(--term-amber, #ff7a1a);
+    background-color: rgba(255, 122, 26, 0.12);
+    border-color: var(--term-amber, #ff7a1a);
   }
   .sidebar-container .nav-link.router-link-active:hover {
-    color: var(--bs-primary);
+    color: var(--term-amber, #ff7a1a);
   }
 </style>

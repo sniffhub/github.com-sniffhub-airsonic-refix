@@ -5,7 +5,7 @@ $theme-text: #ccc;
 $theme-text-muted: #999;
 
 // Bootstrap overrides
-$primary: #09f;
+$primary: #ff7a1a;
 $danger: #ff4141;
 $secondary: $theme-elevation-2;
 
@@ -142,3 +142,212 @@ a.active {
 @import './nav-underlined';
 @import 'bootstrap/scss/bootstrap';
 @import 'vue-slider-component/lib/theme/material';
+
+// Retro terminal font
+html, body, input, button, select, textarea {
+  font-family: 'VT323', 'Courier New', monospace !important;
+  font-size: 20px;
+}
+
+h1, h2, h3, h4, h5, h6, .navbar-brand {
+  letter-spacing: 0.03em;
+}
+
+// Subtle amber chromatic aberration — headers/titles only, kept faint
+// so it reads as a CRT artifact rather than a rendering glitch
+h1, h2, h3, .navbar-brand, .card-header {
+  box-shadow: 2px 0 0 rgba(255, 150, 50, 0.15), -2px 0 0 rgba(255, 200, 100, 0.15);
+}
+
+.sidebar-container {
+  background-image:
+    linear-gradient(rgba(10, 8, 0, 0.9), rgba(10, 8, 0, 0.9)),
+    url('/bg/terrain863.jpeg');
+  background-size: cover;
+  background-position: center;
+}
+
+// Reference-image splash background, darkened so foreground text stays readable
+body {
+  background-image:
+    linear-gradient(rgba(10, 8, 0, 0.88), rgba(10, 8, 0, 0.88)),
+    url('/bg/terrain86.jpeg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+// ---------------------------------------------------------------------------
+// Step 6: amber HUD palette + hairline panel borders, ported from
+// amber-terminal.css (originally written against Navidrome's MUI classes)
+// onto this app's Bootstrap-Vue component structure.
+// ---------------------------------------------------------------------------
+
+:root {
+  --term-amber: #ff7a1a;
+  --term-amber-dim: #cc5500;
+}
+
+// Hairline borders, sharp corners, no drop shadows on panel-like elements
+.card, .navbar, .modal-content, .dropdown-menu, .list-group,
+.form-control, .btn, .table, .badge {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.card, .modal-content, .dropdown-menu, .table {
+  border: 1px solid var(--term-amber-dim) !important;
+}
+
+.navbar {
+  border-bottom: 3px double var(--term-amber) !important;
+}
+
+// Corner-bracket accents (viewfinder-style L marks) on major panels,
+// matching the terrain86 reference's HUD panel corners
+.card, .modal-content {
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    width: 10px;
+    height: 10px;
+    border-top: 2px solid var(--term-amber);
+    border-left: 2px solid var(--term-amber);
+    pointer-events: none;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    right: -1px;
+    width: 10px;
+    height: 10px;
+    border-bottom: 2px solid var(--term-amber);
+    border-right: 2px solid var(--term-amber);
+    pointer-events: none;
+  }
+}
+
+// ALL CAPS, letter-spaced labels — dense technical readout look
+.navbar-brand, .card-header, .nav-link, th, .btn {
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+}
+
+hr, .dropdown-divider {
+  border-top: 3px double var(--term-amber-dim) !important;
+  background: none !important;
+}
+
+// Selected/active/hover states use dim amber fill instead of the default blue
+.list-group-item.active, .list-group-item-action:hover,
+.table-hover tbody tr:hover, .dropdown-item:hover {
+  background-color: rgba(255, 122, 26, 0.12) !important;
+  border-color: var(--term-amber-dim) !important;
+}
+
+// Scrollbars
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0a0800; }
+::-webkit-scrollbar-thumb { background: var(--term-amber-dim); border: 1px solid #0a0800; }
+
+// Fixed corner readout, matching the reference's margin/corner technical
+// caption text
+body::before {
+  content: 'NDR-86 · LOCAL STREAM';
+  position: fixed;
+  bottom: 6px;
+  right: 10px;
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--term-amber-dim);
+  opacity: 0.6;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+img, .cover-parent img {
+  border-radius: 0 !important;
+}
+
+// ---------------------------------------------------------------------------
+// Step 7: radar-sweep widget, bracket-corner panel variant, DELPHI-style
+// boxed nav list, and coded-data margin flourish — ported from the p/p1..p7
+// reference set (proximity radar, particle-collision sidebar, wireframe
+// jet HUD, orbital diagram).
+// ---------------------------------------------------------------------------
+
+// Bracket-corner panel — larger, floating corner brackets (as opposed to the
+// tight inset L-marks on .card/.modal-content) for standalone HUD widgets
+.hud-bracket {
+  position: relative;
+
+  &::before, &::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+  }
+
+  &::before {
+    top: -6px;
+    left: -6px;
+    border-top: 2px solid var(--term-amber);
+    border-left: 2px solid var(--term-amber);
+  }
+
+  &::after {
+    bottom: -6px;
+    right: -6px;
+    border-bottom: 2px solid var(--term-amber);
+    border-right: 2px solid var(--term-amber);
+  }
+}
+
+.hud-bracket-tr, .hud-bracket-bl {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.hud-bracket-tr {
+  top: -6px;
+  right: -6px;
+  border-top: 2px solid var(--term-amber);
+  border-right: 2px solid var(--term-amber);
+}
+.hud-bracket-bl {
+  bottom: -6px;
+  left: -6px;
+  border-bottom: 2px solid var(--term-amber);
+  border-left: 2px solid var(--term-amber);
+}
+
+// Coded-data corner flourish — vertical readout strip on the viewport edge,
+// echoing the small ASHA/REV/DMU unit tags and scan-progress labels in the
+// reference set
+body::after {
+  content: 'REV VR383 · ASHA-811 · DMU-7B3 · ENC:AES';
+  position: fixed;
+  top: 50%;
+  left: 4px;
+  transform: translateY(-50%) rotate(-90deg);
+  transform-origin: left top;
+  font-family: 'VT323', 'Courier New', monospace;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--term-amber-dim);
+  opacity: 0.35;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 9999;
+  white-space: nowrap;
+}

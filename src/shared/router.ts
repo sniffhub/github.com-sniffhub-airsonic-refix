@@ -35,7 +35,7 @@ export function setupRouter(auth: AuthService) {
         path: '/login',
         component: Login,
         props: (route) => ({
-          returnTo: route.query.returnTo,
+          returnTo: route.query.returnTo || '/',
         }),
         meta: {
           layout: 'fullscreen'
