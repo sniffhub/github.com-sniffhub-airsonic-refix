@@ -57,8 +57,15 @@
       border-radius: 0;
     }
     &:deep(.vue-slider-process) {
-      background-color: var(--bs-primary);
+      background-color: var(--term-amber, var(--bs-primary));
       border-radius: 0;
+      box-shadow: 0 0 8px 1px var(--term-amber, var(--bs-primary));
+      animation: progress-glow-pulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes progress-glow-pulse {
+      0%, 100% { box-shadow: 0 0 4px 0 var(--term-amber, var(--bs-primary)); }
+      50% { box-shadow: 0 0 10px 2px var(--term-cyan, var(--bs-primary)); }
     }
 
     /* dot handle */

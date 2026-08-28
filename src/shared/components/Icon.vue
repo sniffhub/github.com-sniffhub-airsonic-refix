@@ -27,6 +27,7 @@
   import iconFolder from '@iconify-icons/bi/folder'
   import iconHeart from '@iconify-icons/bi/heart'
   import iconHeartFill from '@iconify-icons/bi/heart-fill'
+  import iconHome from '@iconify-icons/bi/house-fill'
   import iconLibrary from '@iconify-icons/bi/collection'
   import iconLink from '@iconify-icons/bi/box-arrow-up-right'
   import iconList from '@iconify-icons/bi/list-ul'
@@ -41,6 +42,7 @@
   import iconRadio from '@iconify-icons/bi/broadcast'
   import iconRefresh from '@iconify-icons/bi/arrow-counterclockwise'
   import iconRepeat from '@iconify-icons/bi/arrow-repeat'
+  import iconSearch from '@iconify-icons/bi/search'
   import iconShuffle from '@iconify-icons/bi/shuffle'
   import iconSkipEnd from '@iconify-icons/bi/skip-end-fill'
   import iconSkipStart from '@iconify-icons/bi/skip-start-fill'
@@ -61,6 +63,7 @@
     folder: iconFolder.body,
     heart: iconHeart.body,
     'heart-fill': iconHeartFill.body,
+    home: iconHome.body,
     library: iconLibrary.body,
     link: iconLink.body,
     list: iconList.body,
@@ -75,6 +78,7 @@
     radio: iconRadio.body,
     refresh: iconRefresh.body,
     repeat: iconRepeat.body,
+    search: iconSearch.body,
     shuffle: iconShuffle.body,
     'skip-end': iconSkipEnd.body,
     'skip-start': iconSkipStart.body,

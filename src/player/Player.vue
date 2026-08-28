@@ -1,5 +1,5 @@
 <template>
-  <div :class="{'visible': track}" class="player d-flex">
+  <div :class="{'visible': track}" class="player hud-pulse d-flex">
     <div class="flex-fill">
       <ProgressBar v-if="track" />
 
@@ -30,6 +30,11 @@
                   {{ track.album }}
                 </template>
               </div>
+            </div>
+            <RadarSweep v-if="track" compact class="d-none d-md-block ms-3" />
+            <div v-if="track" class="data-readout d-none d-lg-flex ms-3">
+              <span class="data-readout-label">SESSION</span>
+              <span>{{ sessionId }}</span>
             </div>
           </template>
         </div>
@@ -179,6 +184,7 @@
   import { defineComponent } from 'vue'
   import { ReplayGainMode } from './audio'
   import ProgressBar from '@/player/ProgressBar.vue'
+  import RadarSweep from '@/app/RadarSweep.vue'
   import { useFavouriteStore } from '@/library/favourite/store'
   import { formatArtists } from '@/shared/utils'
   import SwitchInput from '@/shared/components/SwitchInput.vue'
@@ -193,6 +199,7 @@
       Dropdown,
       SwitchInput,
       ProgressBar,
+      RadarSweep,
       IconReplayGain,
       IconReplayGainTrack,
       IconReplayGainAlbum,
@@ -202,6 +209,11 @@
         ReplayGainMode,
         favouriteStore: useFavouriteStore(),
         playerStore: usePlayerStore(),
+      }
+    },
+    data() {
+      return {
+        sessionId: Math.random().toString(16).slice(2, 8).toUpperCase(),
       }
     },
     computed: {
@@ -294,7 +306,13 @@
   }
   .visible {
     height: auto;
-    max-height: 100px;
+    max-height: 110px;
+  }
+  .player {
+    border-top: 1px solid var(--term-amber-dim);
+  }
+  .data-readout {
+    line-height: 1.1;
   }
   .icon {
     display: flex;

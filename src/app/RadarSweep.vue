@@ -1,6 +1,6 @@
 <template>
-  <div class="radar-widget hud-bracket">
-    <div class="radar-label">
+  <div class="radar-widget hud-bracket hud-pulse" :class="{ compact }">
+    <div v-if="!compact" class="radar-label">
       <span>AUDIO SCAN</span>
     </div>
     <div class="radar-circle">
@@ -18,7 +18,7 @@
         :style="{ top: blip.top, left: blip.left, animationDelay: blip.delay }"
       />
     </div>
-    <div class="radar-readout">
+    <div v-if="!compact" class="radar-readout">
       <span>SIG: LOCKED</span>
       <span>CH: 02/02</span>
       <span>GAIN: {{ gain }}%</span>
@@ -29,6 +29,9 @@
   import { defineComponent } from 'vue'
 
   export default defineComponent({
+    props: {
+      compact: { type: Boolean, default: false },
+    },
     data() {
       return {
         gain: 78,
@@ -46,6 +49,13 @@
   margin: 1rem 0.5rem;
   padding: 0.75rem;
   position: relative;
+}
+
+.radar-widget.compact {
+  margin: 0;
+  padding: 0.25rem;
+  width: 52px;
+  flex: 0 0 auto;
 }
 
 .radar-label {

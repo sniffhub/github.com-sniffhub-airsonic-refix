@@ -4,7 +4,6 @@
       <div class="sidebar-scroll">
         <SidebarNav />
       </div>
-      <RadarSweep class="sidebar-radar" />
     </div>
     <div
       class="offcanvas offcanvas-start d-md-none"
@@ -21,13 +20,11 @@
 <script lang="ts">
   import { defineComponent } from 'vue'
   import SidebarNav from './SidebarNav.vue'
-  import RadarSweep from './RadarSweep.vue'
   import { useMainStore } from '@/shared/store'
 
   export default defineComponent({
     components: {
       SidebarNav,
-      RadarSweep,
     },
     setup() {
       return {
@@ -63,10 +60,6 @@
     display: none;
   }
 
-  .sidebar-container .sidebar-radar {
-    flex: 0 0 auto;
-  }
-
   .sidebar-container .sidebar-brand {
     padding: 1rem 1rem 0.75rem;
   }
@@ -79,6 +72,9 @@
     display: block;
   }
 
+  /* Solid rectangular border per item, matching the actual DELPHI/ENDCAPS/
+     BARREL/CENTRAL list and Super Terrain 86's MOUNTAIN/CITYSCAPE/FOREST/
+     OCEAN list in the reference images (full box border, not corner brackets) */
   .sidebar-container .nav-link {
     width: calc(100%);
     overflow: hidden;

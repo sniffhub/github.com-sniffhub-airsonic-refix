@@ -1,9 +1,11 @@
 <template>
-  <form @submit.prevent="search">
+  <form class="search-terminal" @submit.prevent="search">
+    <span class="search-terminal-prompt">&gt;</span>
     <input
       v-model="query"
       class="form-control" type="search"
-      placeholder="Search">
+      placeholder="search...">
+    <span class="search-terminal-cursor" />
   </form>
 </template>
 <script lang="ts">

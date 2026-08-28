@@ -7,9 +7,14 @@
       </button>
     </div>
 
-    <router-link class="nav-link" :to="{name: 'home'}" exact>
-      <Icon icon="discover" class="" /> Discover
-    </router-link>
+    <div class="sidebar-icon-row">
+      <router-link class="sidebar-icon-btn" :to="{name: 'home'}" exact>
+        <Icon icon="home" /> Home
+      </router-link>
+      <router-link class="sidebar-icon-btn" :to="{name: 'search'}">
+        <Icon icon="search" /> Search
+      </router-link>
+    </div>
 
     <router-link class="nav-link" :to="{name: 'queue'}">
       <Icon icon="soundwave" /> Playing
