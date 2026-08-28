@@ -186,6 +186,11 @@ body {
 :root {
   --term-amber: #ff7a1a;
   --term-amber-dim: #cc5500;
+  // Real dual-tone pair, used only where a two-hue treatment is explicitly
+  // wanted (e.g. the Now Playing visualizer) — NOT the app-wide default.
+  // Every other panel stays single-tone amber per the note below.
+  --term-cyan: #22d3ee;
+  --term-cyan-dim: #0e8fa8;
 }
 
 // HUD glow pulse — every p/p1..p7/terrain reference panel is monochrome

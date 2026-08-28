@@ -19,6 +19,7 @@
   import { defineComponent } from 'vue'
   import iconArrowUpDown from '@iconify-icons/bi/arrow-up-down'
   import iconCheck from '@iconify-icons/bi/check'
+  import iconChevronLeft from '@iconify-icons/bi/chevron-compact-left'
   import iconChevronRight from '@iconify-icons/bi/chevron-compact-right'
   import iconDiscover from '@iconify-icons/bi/card-text'
   import iconDownload from '@iconify-icons/bi/download'
@@ -55,6 +56,7 @@
   const icons = {
     'arrow-up-down': iconArrowUpDown.body,
     check: iconCheck.body,
+    'chevron-left': iconChevronLeft.body,
     'chevron-right': iconChevronRight.body,
     discover: iconDiscover.body,
     download: iconDownload.body,

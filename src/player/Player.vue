@@ -16,9 +16,9 @@
               <img v-else width="52" height="52" src="@/shared/assets/fallback.svg">
             </component>
             <div style="min-width: 0">
-              <div class="text-truncate">
+              <router-link :to="{ name: 'now-playing' }" class="text-truncate d-block" style="color: inherit">
                 {{ streamTitle || track.title }}
-              </div>
+              </router-link>
               <div class="text-truncate text-muted">
                 <template v-if="track.artists.length > 0">
                   <span v-for="(artist, index) in track.artists" :key="artist.id">
@@ -302,6 +302,7 @@
     right: 0;
     height: 0;
     max-height: 0;
+    z-index: 100;
     transition: max-height 0.5s;
   }
   .visible {

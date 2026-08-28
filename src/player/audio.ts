@@ -23,7 +23,9 @@ export class AudioController {
   private replayGain: ReplayGain | null = null
 
   private context = new AudioContext()
-  private pipeline = creatPipeline(this.context, {})
+  private analyser = createAnalyser(this.context)
+  private stereoAnalyser = createStereoAnalyser(this.context, this.analyser)
+  private pipeline = creatPipeline(this.context, {}, this.analyser)
 
   ontimeupdate: (value: number) => void = () => { /* do nothing */ }
   ondurationchange: (value: number) => void = () => { /* do nothing */ }
@@ -34,6 +36,30 @@ export class AudioController {
 
   currentTime() {
     return this.pipeline.audio.currentTime
+  }
+
+  // Byte frequency data (0-255 per bin) for the currently playing audio, for
+  // driving a visualizer. Returns an empty array before any track has played.
+  getFrequencyData(): Uint8Array {
+    const data = new Uint8Array(this.analyser.frequencyBinCount)
+    this.analyser.getByteFrequencyData(data)
+    return data
+  }
+
+  // Byte time-domain data (raw waveform, 128 = silence) for an oscilloscope.
+  getTimeDomainData(): Uint8Array {
+    const data = new Uint8Array(this.analyser.fftSize)
+    this.analyser.getByteTimeDomainData(data)
+    return data
+  }
+
+  // Left/right byte time-domain data, in sync, for an XY (Lissajous) scope.
+  getStereoTimeDomainData(): { left: Uint8Array, right: Uint8Array } {
+    const left = new Uint8Array(this.stereoAnalyser.left.fftSize)
+    const right = new Uint8Array(this.stereoAnalyser.right.fftSize)
+    this.stereoAnalyser.left.getByteTimeDomainData(left)
+    this.stereoAnalyser.right.getByteTimeDomainData(right)
+    return { left, right }
   }
 
   duration() {
@@ -90,7 +116,7 @@ export class AudioController {
       url: options.url,
       volume: this.pipeline.volumeNode.gain.value,
       replayGain: this.replayGainFactor(),
-    })
+    }, this.analyser)
 
     this.pipeline.audio.onerror = () => {
       this.onerror(this.pipeline.audio.error)
@@ -192,7 +218,35 @@ export class AudioController {
   }
 }
 
-function creatPipeline(context: AudioContext, options: { url?: string, volume?: number, replayGain?: number }) {
+function createAnalyser(context: AudioContext) {
+  const analyser = context.createAnalyser()
+  analyser.fftSize = 256
+  analyser.smoothingTimeConstant = 0.8
+  analyser.connect(context.destination)
+  return analyser
+}
+
+// Splits the (already fully mixed) analyser signal into left/right channels
+// via a ChannelSplitterNode, each fed into its own AnalyserNode, so left/right
+// time-domain data can be read in sync for an XY (Lissajous) scope. This taps
+// the signal for analysis only — it doesn't touch the audio output path.
+function createStereoAnalyser(context: AudioContext, source: AnalyserNode) {
+  const splitter = context.createChannelSplitter(2)
+  const left = context.createAnalyser()
+  const right = context.createAnalyser()
+  left.fftSize = 256
+  right.fftSize = 256
+  left.smoothingTimeConstant = 0
+  right.smoothingTimeConstant = 0
+
+  source.connect(splitter)
+  splitter.connect(left, 0)
+  splitter.connect(right, 1)
+
+  return { splitter, left, right }
+}
+
+function creatPipeline(context: AudioContext, options: { url?: string, volume?: number, replayGain?: number }, analyser: AnalyserNode) {
   const audio = new Audio(options.url)
   audio.crossOrigin = 'anonymous'
   const sourceNode = context.createMediaElementSource(audio)
@@ -210,7 +264,7 @@ function creatPipeline(context: AudioContext, options: { url?: string, volume?: 
     .connect(volumeNode)
     .connect(replayGainNode)
     .connect(fadeNode)
-    .connect(context.destination)
+    .connect(analyser)
 
   function disconnect() {
     audio.pause()

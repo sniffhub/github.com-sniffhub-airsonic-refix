@@ -1,6 +1,7 @@
 import Router from 'vue-router'
 import Login from '@/auth/Login.vue'
 import Queue from '@/player/Queue.vue'
+import NowPlaying from '@/player/NowPlaying.vue'
 import Discover from '@/discover/Discover.vue'
 import ArtistDetails from '@/library/artist/ArtistDetails.vue'
 import ArtistLibrary from '@/library/artist/ArtistLibrary.vue'
@@ -45,6 +46,11 @@ export function setupRouter(auth: AuthService) {
         name: 'queue',
         path: '/queue',
         component: Queue,
+      },
+      {
+        name: 'now-playing',
+        path: '/now-playing',
+        component: NowPlaying,
       },
       {
         name: 'albums-default',
