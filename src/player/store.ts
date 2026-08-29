@@ -121,6 +121,9 @@ export const usePlayerStore = defineStore('player', {
     getStereoTimeDomainData(): { left: Uint8Array, right: Uint8Array } {
       return audio.getStereoTimeDomainData()
     },
+    getAudioInfo(): { sampleRate: number, fftSize: number } {
+      return audio.getAudioInfo()
+    },
     async loadQueue() {
       const { tracks, currentTrack, currentTrackPosition } = await this.api.getPlayQueue()
       this.setQueue(tracks)

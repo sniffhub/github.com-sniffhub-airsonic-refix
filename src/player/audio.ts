@@ -66,6 +66,12 @@ export class AudioController {
     return this.pipeline.audio.duration
   }
 
+  // Real technical facts about the running audio graph, for a data-readout
+  // HUD element — not simulated values.
+  getAudioInfo(): { sampleRate: number, fftSize: number } {
+    return { sampleRate: this.context.sampleRate, fftSize: this.analyser.fftSize }
+  }
+
   setBuffer(url: string) {
     this.buffer.src = url
   }

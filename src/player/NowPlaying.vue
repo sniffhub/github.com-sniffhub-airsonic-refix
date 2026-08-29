@@ -1,15 +1,29 @@
 <template>
   <div class="now-playing hud-bracket">
     <template v-if="track">
-      <!-- Ambient background — decorative only, never intercepts clicks -->
+      <!-- Ambient background — decorative only, never intercepts clicks.
+           Each parallax layer gets its own mouse-driven translate; the
+           drift-* keyframe animation stays on the inner .drift-shape so
+           both transforms can coexist (a single element can't carry both
+           a CSS animation and a JS-driven inline transform at once). -->
       <div class="now-playing-bg" aria-hidden="true">
-        <div class="drift-shape drift-hex drift-a" />
-        <div class="drift-shape drift-hex drift-b" />
-        <div class="drift-shape drift-grid drift-c" />
-        <div class="drift-shape drift-dot drift-d" />
-        <div class="drift-shape drift-dot drift-e" />
-        <div class="drift-shape drift-dot drift-f" />
+        <div class="parallax-layer" :style="parallaxStyle(0.4)">
+          <div class="drift-shape drift-hex drift-a" />
+          <div class="drift-shape drift-dot drift-d" />
+        </div>
+        <div class="parallax-layer" :style="parallaxStyle(0.8)">
+          <div class="drift-shape drift-hex drift-b" />
+          <div class="drift-shape drift-dot drift-e" />
+        </div>
+        <div class="parallax-layer" :style="parallaxStyle(1.3)">
+          <div class="drift-shape drift-grid drift-c" />
+          <div class="drift-shape drift-dot drift-f" />
+        </div>
       </div>
+
+      <!-- Slow vertical scan sweep — distinct from the static CRT scanline
+           texture; this one actually moves, occasionally, across everything. -->
+      <div class="scan-sweep" aria-hidden="true" />
 
       <div class="now-playing-content">
         <router-link :to="{ name: 'queue' }" class="now-playing-back">
@@ -21,7 +35,7 @@
           <img v-else src="@/shared/assets/fallback.svg" :alt="track.title">
         </div>
 
-        <div class="now-playing-viz-wrap">
+        <div class="now-playing-viz-wrap" :class="{ 'mode-glitch': modeTransitioning }">
           <canvas ref="canvas" class="now-playing-viz" width="900" height="220" />
           <button
             type="button"
@@ -31,6 +45,10 @@
           >
             {{ vizModeLabel }}
           </button>
+          <div v-if="modeTransitioning" class="viz-recalibrating">RECALIBRATING&hellip;</div>
+          <div class="viz-readout" aria-hidden="true">
+            <div v-for="(line, i) in readoutLines" :key="i">{{ line }}</div>
+          </div>
         </div>
 
         <!-- Transport controls sit right under the visualizer, not buried
@@ -74,7 +92,7 @@
   </div>
 </template>
 <script lang="ts">
-  import { defineComponent } from 'vue'
+  import { defineComponent, markRaw } from 'vue'
   import ProgressBar from '@/player/ProgressBar.vue'
   import { usePlayerStore } from '@/player/store'
 
@@ -98,6 +116,11 @@
     ]
   }
 
+  // How long a Lissajous trail point stays visible before it's pruned, and
+  // how it ages through the amber→cyan gradient over that lifetime.
+  const LISSAJOUS_TRAIL_MS = 900
+  const MODE_GLITCH_MS = 180 // matches BootSequence's glitch-flicker timing
+
   export default defineComponent({
     components: {
       ProgressBar,
@@ -111,6 +134,17 @@
       return {
         frame: 0 as number,
         vizModeIndex: 0,
+        // Non-reactive: mutated every animation frame, so it's kept out of
+        // Vue's reactivity system with markRaw to avoid proxy overhead.
+        lissajousHistory: markRaw([] as { x: number, y: number, t: number }[]),
+        modeTransitioning: false,
+        modeTransitionTimer: 0 as ReturnType<typeof setTimeout> | 0,
+        parallaxX: 0,
+        parallaxY: 0,
+        reducedMotion: false,
+        // Real facts about the running audio graph (sampleRate/fftSize),
+        // fetched once the audio pipeline exists — never fabricated.
+        audioInfo: { sampleRate: 0, fftSize: 0 },
       }
     },
     computed: {
@@ -129,14 +163,39 @@
       vizModeLabel(): string {
         return VIZ_MODES[this.vizModeIndex].label
       },
+      // Corner data-readout HUD — only genuinely available values, no
+      // invented numbers (there's no BPM/bitrate field on Track).
+      readoutLines(): string[] {
+        const lines = [`T+${this.formatClock(this.playerStore.currentTime)} / ${this.formatClock(this.playerStore.duration)}`]
+        if (this.audioInfo.sampleRate > 0) {
+          lines.push(`FFT ${this.audioInfo.fftSize} @ ${this.audioInfo.sampleRate}Hz`)
+        }
+        if (this.playerStore.queue && this.playerStore.queueIndex > -1) {
+          lines.push(`TRK ${this.playerStore.queueIndex + 1}/${this.playerStore.queue.length}`)
+        }
+        const rg = this.track?.replayGain
+        if (rg && Number.isFinite(rg.trackGain)) {
+          lines.push(`RG ${rg.trackGain >= 0 ? '+' : ''}${rg.trackGain.toFixed(1)}dB`)
+        }
+        return lines
+      },
     },
     mounted() {
+      this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      this.audioInfo = this.playerStore.getAudioInfo()
       this.draw()
       window.addEventListener('keydown', this.onKeydown)
+      if (!this.reducedMotion) {
+        window.addEventListener('mousemove', this.onMousemove)
+      }
     },
     beforeUnmount() {
       cancelAnimationFrame(this.frame)
+      if (this.modeTransitionTimer) {
+        clearTimeout(this.modeTransitionTimer)
+      }
       window.removeEventListener('keydown', this.onKeydown)
+      window.removeEventListener('mousemove', this.onMousemove)
     },
     methods: {
       playPause() {
@@ -150,6 +209,37 @@
       },
       cycleVizMode() {
         this.vizModeIndex = (this.vizModeIndex + 1) % VIZ_MODES.length
+        this.lissajousHistory.length = 0
+        if (this.reducedMotion) {
+          return
+        }
+        this.modeTransitioning = true
+        if (this.modeTransitionTimer) {
+          clearTimeout(this.modeTransitionTimer)
+        }
+        this.modeTransitionTimer = setTimeout(() => {
+          this.modeTransitioning = false
+        }, MODE_GLITCH_MS)
+      },
+      formatClock(seconds: number): string {
+        if (!Number.isFinite(seconds) || seconds < 0) {
+          return '--:--'
+        }
+        const m = Math.floor(seconds / 60)
+        const s = Math.floor(seconds % 60)
+        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      },
+      onMousemove(event: MouseEvent) {
+        this.parallaxX = (event.clientX / window.innerWidth - 0.5) * 2
+        this.parallaxY = (event.clientY / window.innerHeight - 0.5) * 2
+      },
+      parallaxStyle(depth: number) {
+        if (this.reducedMotion) {
+          return {}
+        }
+        const x = (this.parallaxX * depth * 18).toFixed(1)
+        const y = (this.parallaxY * depth * 18).toFixed(1)
+        return { transform: `translate(${x}px, ${y}px)` }
       },
       onKeydown(event: KeyboardEvent) {
         const target = event.target as HTMLElement | null
@@ -179,8 +269,9 @@
 
         if (this.vizMode === 'lissajous') {
           // Fading trail instead of a hard clear, for a glowing-phosphor
-          // trace look instead of a redrawn-from-scratch frame.
-          ctx.fillStyle = 'rgba(10, 8, 0, 0.15)'
+          // trace look instead of a redrawn-from-scratch frame. Slightly
+          // lower alpha than other modes for longer persistence.
+          ctx.fillStyle = 'rgba(10, 8, 0, 0.1)'
           ctx.fillRect(0, 0, width, height)
         } else {
           ctx.clearRect(0, 0, width, height)
@@ -351,22 +442,69 @@
         const cx = width / 2
         const cy = height / 2
         const scale = Math.min(width, height) / 2 - 12
+        const now = Date.now()
 
-        ctx.beginPath()
-        for (let i = 0; i < left.length; i++) {
-          const x = cx + ((left[i] - 128) / 128) * scale
-          const y = cy + ((right[i] - 128) / 128) * scale
-          if (i === 0) {
-            ctx.moveTo(x, y)
-          } else {
-            ctx.lineTo(x, y)
-          }
+        // Append this frame's points to the running history (downsampled —
+        // full fftSize resolution isn't needed for a persistence trail and
+        // would make the per-frame redraw below far too expensive), tagged
+        // with their birth time so age drives the color.
+        for (let i = 0; i < left.length; i += 4) {
+          this.lissajousHistory.push({
+            x: cx + ((left[i] - 128) / 128) * scale,
+            y: cy + ((right[i] - 128) / 128) * scale,
+            t: now,
+          })
         }
-        ctx.strokeStyle = 'rgba(255, 122, 26, 0.85)'
-        ctx.shadowBlur = 12
-        ctx.shadowColor = 'rgba(255, 122, 26, 0.9)'
+        // Prune anything older than the trail lifetime.
+        const cutoff = now - LISSAJOUS_TRAIL_MS
+        let start = 0
+        while (start < this.lissajousHistory.length && this.lissajousHistory[start].t < cutoff) {
+          start++
+        }
+        if (start > 0) {
+          this.lissajousHistory.splice(0, start)
+        }
+
+        // Redrawing one stroke per point pair would mean thousands of
+        // stroke() calls a frame. Instead, bucket points into a handful of
+        // age bands and draw each band as a single path — cheap, and still
+        // reads as a smooth amber→cyan gradient along the trace as it ages.
+        const history = this.lissajousHistory
+        const BUCKETS = 6
         ctx.lineWidth = 1.5
-        ctx.stroke()
+        for (let b = 0; b < BUCKETS; b++) {
+          const ageLo = b / BUCKETS
+          const ageHi = (b + 1) / BUCKETS
+          const [r, g, b2] = lerpColor((ageLo + ageHi) / 2)
+          const alpha = 0.85 * (1 - ageLo)
+          ctx.beginPath()
+          let drawing = false
+          for (let i = 0; i < history.length; i++) {
+            const age = (now - history[i].t) / LISSAJOUS_TRAIL_MS
+            if (age >= ageLo && age < ageHi) {
+              if (drawing) ctx.lineTo(history[i].x, history[i].y)
+              else { ctx.moveTo(history[i].x, history[i].y); drawing = true }
+            } else {
+              drawing = false
+            }
+          }
+          ctx.strokeStyle = `rgba(${r}, ${g}, ${b2}, ${alpha})`
+          ctx.shadowBlur = 10 * (1 - ageLo) + 2
+          ctx.shadowColor = `rgba(${r}, ${g}, ${b2}, ${alpha})`
+          ctx.stroke()
+        }
+
+        // Leading-edge glow particle at the newest point.
+        const head = history[history.length - 1]
+        if (head) {
+          ctx.beginPath()
+          ctx.arc(head.x, head.y, 2.5, 0, Math.PI * 2)
+          ctx.fillStyle = 'rgba(255, 200, 140, 0.95)'
+          ctx.shadowBlur = 16
+          ctx.shadowColor = 'rgba(255, 160, 60, 1)'
+          ctx.fill()
+        }
+        ctx.shadowBlur = 0
       },
     },
   })
@@ -386,6 +524,13 @@
     z-index: 0;
     pointer-events: none;
     overflow: hidden;
+  }
+
+  .parallax-layer {
+    position: absolute;
+    inset: 0;
+    transition: transform 0.4s ease-out;
+    will-change: transform;
   }
 
   .drift-shape {
@@ -461,6 +606,44 @@
     .drift-shape {
       animation: none !important;
     }
+    .parallax-layer {
+      transition: none;
+    }
+  }
+
+  /* Slow vertical scan sweep: sits above everything, occasional and subtle,
+     distinct from the app's static CRT scanline texture — this one moves. */
+  .scan-sweep {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .scan-sweep::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 40px;
+    top: -40px;
+    background: linear-gradient(
+      to bottom,
+      rgba(255, 184, 77, 0) 0%,
+      rgba(255, 184, 77, 0.06) 50%,
+      rgba(255, 184, 77, 0) 100%
+    );
+    animation: scan-sweep-move 9s linear infinite;
+  }
+  @keyframes scan-sweep-move {
+    0% { transform: translateY(0); }
+    22% { transform: translateY(calc(100vh + 40px)); }
+    100% { transform: translateY(calc(100vh + 40px)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scan-sweep {
+      display: none;
+    }
   }
 
   /* --- Real content: always above the ambient background --- */
@@ -528,6 +711,59 @@
   .viz-mode-toggle:hover {
     color: var(--term-amber);
     border-color: var(--term-amber);
+  }
+
+  /* "Recalibrating" glitch transition on visualizer mode switch — mirrors
+     BootSequence's glitch-flicker/glitch-shift timing (0.16s steps(2)). */
+  .now-playing-viz-wrap.mode-glitch {
+    animation: viz-glitch-flicker 0.18s steps(2, end) 1;
+  }
+  .now-playing-viz-wrap.mode-glitch .now-playing-viz {
+    animation: viz-glitch-shift 0.18s steps(2, end) 1;
+  }
+  @keyframes viz-glitch-flicker {
+    0% { filter: brightness(1) saturate(1); }
+    30% { filter: brightness(1.6) saturate(1.4); }
+    60% { filter: brightness(0.7) saturate(1.2); }
+    100% { filter: brightness(1) saturate(1); }
+  }
+  @keyframes viz-glitch-shift {
+    0% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    50% { transform: translateX(2px); }
+    75% { transform: translateX(-1px); }
+    100% { transform: translateX(0); }
+  }
+  .viz-recalibrating {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    font-family: 'VT323', 'Courier New', monospace;
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--term-amber);
+    text-shadow: 0 0 8px rgba(255, 184, 77, 0.8);
+    background: rgba(10, 8, 0, 0.25);
+  }
+
+  .viz-readout {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    z-index: 2;
+    pointer-events: none;
+    font-family: 'VT323', 'Courier New', monospace;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    color: var(--term-amber-dim);
+    opacity: 0.65;
+    text-shadow: 0 0 4px rgba(255, 122, 26, 0.4);
   }
 
   /* Transport controls sit directly under the visualizer — large, central,
