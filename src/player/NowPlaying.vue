@@ -96,13 +96,14 @@
   import ProgressBar from '@/player/ProgressBar.vue'
   import { usePlayerStore } from '@/player/store'
 
-  type VizMode = 'spectrum' | 'sonar' | 'oscilloscope' | 'lissajous'
+  type VizMode = 'spectrum' | 'sonar' | 'oscilloscope' | 'lissajous' | 'vfd'
 
   const VIZ_MODES: { mode: VizMode, label: string }[] = [
     { mode: 'spectrum', label: 'BARS' },
     { mode: 'sonar', label: 'SONAR' },
     { mode: 'oscilloscope', label: 'SCOPE' },
     { mode: 'lissajous', label: 'XY' },
+    { mode: 'vfd', label: 'VFD' },
   ]
 
   const AMBER: [number, number, number] = [255, 122, 26]
@@ -137,6 +138,10 @@
         // Non-reactive: mutated every animation frame, so it's kept out of
         // Vue's reactivity system with markRaw to avoid proxy overhead.
         lissajousHistory: markRaw([] as { x: number, y: number, t: number }[]),
+        // VFD peak-hold: per-bar running max (0-1) and remaining hold-frame
+        // count before it starts falling. Non-reactive, mutated every frame.
+        vfdPeaks: markRaw([] as number[]),
+        vfdPeakHold: markRaw([] as number[]),
         modeTransitioning: false,
         modeTransitionTimer: 0 as ReturnType<typeof setTimeout> | 0,
         parallaxX: 0,
@@ -287,8 +292,10 @@
           this.drawSonar(ctx, width, height)
         } else if (this.vizMode === 'oscilloscope') {
           this.drawOscilloscope(ctx, width, height)
-        } else {
+        } else if (this.vizMode === 'lissajous') {
           this.drawLissajous(ctx, width, height)
+        } else {
+          this.drawVfd(ctx, width, height)
         }
       },
       // Deliberate exception to the single-tone-amber rule used everywhere
@@ -503,6 +510,79 @@
           ctx.shadowBlur = 16
           ctx.shadowColor = 'rgba(255, 160, 60, 1)'
           ctx.fill()
+        }
+        ctx.shadowBlur = 0
+      },
+      // Retro car-stereo VFD spectrum analyzer: discrete glowing segments
+      // (not a smooth bar) per LED/VFD cell, with a bright peak-hold cap
+      // that holds briefly then falls back down like a real VU meter.
+      drawVfd(ctx: CanvasRenderingContext2D, width: number, height: number) {
+        const data = this.playerStore.getFrequencyData()
+        if (data.length === 0) {
+          return
+        }
+
+        const barCount = 32
+        const step = Math.floor(data.length / barCount)
+        const barGap = 3
+        const barWidth = (width - barGap * (barCount - 1)) / barCount
+        const segHeight = 6
+        const segGap = 2
+        const totalSegments = Math.max(1, Math.floor(height / (segHeight + segGap)))
+
+        if (this.vfdPeaks.length !== barCount) {
+          this.vfdPeaks = markRaw(new Array(barCount).fill(0))
+          this.vfdPeakHold = markRaw(new Array(barCount).fill(0))
+        }
+
+        const HOLD_FRAMES = 24 // ~400ms at 60fps before the peak starts falling
+        const FALL_PER_FRAME = 1 / 70 // full-height fall in ~1.1s once it starts
+
+        for (let i = 0; i < barCount; i++) {
+          const value = data[i * step] / 255
+          const litSegments = Math.round(value * totalSegments)
+          const x = i * (barWidth + barGap)
+
+          // Peak-hold: snap up instantly on a new max, hold, then fall.
+          if (value >= this.vfdPeaks[i]) {
+            this.vfdPeaks[i] = value
+            this.vfdPeakHold[i] = HOLD_FRAMES
+          } else if (this.vfdPeakHold[i] > 0) {
+            this.vfdPeakHold[i]--
+          } else {
+            this.vfdPeaks[i] = Math.max(value, this.vfdPeaks[i] - FALL_PER_FRAME)
+          }
+          const peakSegment = Math.max(1, Math.round(this.vfdPeaks[i] * totalSegments))
+
+          for (let s = 0; s < totalSegments; s++) {
+            const segY = height - (s + 1) * (segHeight + segGap) + segGap
+            const lit = s < litSegments
+            const [r, g, b] = lerpColor(s / (totalSegments - 1))
+
+            if (lit) {
+              // Punchier bloom than the smooth BARS mode — brighter fill,
+              // wider shadow blur, closer to genuine VFD brightness.
+              ctx.shadowBlur = 14
+              ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 1)`
+              ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`
+              ctx.fillRect(x, segY, barWidth, segHeight)
+            } else {
+              // Dim, unlit segment cells — reads as a real segmented
+              // display rather than a redrawn shape each frame.
+              ctx.shadowBlur = 0
+              ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.08)`
+              ctx.fillRect(x, segY, barWidth, segHeight)
+            }
+          }
+
+          // Bright single peak-hold cell, drifting down over the lit stack.
+          if (this.vfdPeaks[i] > 0.02) {
+            const peakY = height - peakSegment * (segHeight + segGap) + segGap
+            ctx.shadowBlur = 18
+            ctx.shadowColor = 'rgba(255, 250, 230, 1)'
+            ctx.fillStyle = 'rgba(255, 250, 230, 1)'
+            ctx.fillRect(x, peakY, barWidth, segHeight)
+          }
         }
         ctx.shadowBlur = 0
       },
