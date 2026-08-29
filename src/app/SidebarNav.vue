@@ -32,20 +32,8 @@
       <Icon icon="library" /> Artists
     </router-link>
 
-    <router-link class="nav-item nav-link" :to="{name: 'genres'}">
-      <Icon icon="library" /> Genres
-    </router-link>
-
     <router-link class="nav-link" :to="{name: 'playlists'}">
       <Icon icon="list" /> Playlists
-    </router-link>
-
-    <router-link class="nav-link" :to="{name: 'favourites'}">
-      <Icon icon="heart" /> Favourites
-    </router-link>
-
-    <router-link class="nav-link" :to="{name: 'podcasts'}">
-      <Icon icon="podcast" /> Podcasts
     </router-link>
 
     <router-link class="nav-link" :to="{name: 'radio'}">

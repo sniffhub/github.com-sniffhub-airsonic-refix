@@ -101,14 +101,14 @@
   import { usePlayerStore } from '@/player/store'
   import { formatArtists } from '@/shared/utils'
 
-  type VizMode = 'spectrum' | 'sonar' | 'lissajous' | 'vfd' | 'dotmatrix'
+  type VizMode = 'spectrum' | 'lissajous' | 'vfd' | 'dotmatrix' | 'particles'
 
   const VIZ_MODES: { mode: VizMode, label: string }[] = [
     { mode: 'spectrum', label: 'BARS' },
-    { mode: 'sonar', label: 'SONAR' },
     { mode: 'lissajous', label: 'XY' },
     { mode: 'vfd', label: 'VFD' },
     { mode: 'dotmatrix', label: 'DOT-MATRIX' },
+    { mode: 'particles', label: 'PARTICLES' },
   ]
 
   // Chunky 5x7 bitmap font for the DOT-MATRIX mode's bottom label — rendered
@@ -179,6 +179,18 @@
   const LISSAJOUS_TRAIL_MS = 900
   const MODE_GLITCH_MS = 180 // matches BootSequence's glitch-flicker timing
 
+  // PARTICLES mode (Stage 1 — static reconstruction, no audio yet): grid
+  // interval (px) at which the album art is sampled, and the luminance
+  // threshold below which a sampled pixel is skipped entirely (too dark to
+  // read as part of the image).
+  const PARTICLE_SAMPLE_STEP = 4
+  const PARTICLE_LUMINANCE_MIN = 0.08
+  // Stage 2 audio-reactivity tuning — kept modest so the reconstruction stays
+  // recognizable; these are the first values to raise if it still reads static.
+  const PARTICLE_PULSE_STRENGTH = 0.5 // overall amplitude -> size/brightness boost
+  const PARTICLE_MAX_DISPLACEMENT_PX = 3 // per-particle jitter from home position
+  const PARTICLE_BREATH_STRENGTH = 0.025 // whole-field scale pulse
+
   export default defineComponent({
     components: {
       ProgressBar,
@@ -195,6 +207,12 @@
         // Non-reactive: mutated every animation frame, so it's kept out of
         // Vue's reactivity system with markRaw to avoid proxy overhead.
         lissajousHistory: markRaw([] as { x: number, y: number, t: number }[]),
+        // PARTICLES mode: sampled album-art particles (screen-space x/y,
+        // luminance 0-1), built once per track from an offscreen canvas.
+        // Non-reactive — rebuilt only when the art image changes, read every
+        // frame during draw.
+        particlePoints: markRaw([] as { x: number, y: number, lum: number, angle: number }[]),
+        particleArtSrc: '',
         // VFD peak-hold: per-bar running max (0-1) and remaining hold-frame
         // count before it starts falling. Non-reactive, mutated every frame.
         vfdPeaks: markRaw([] as number[]),
@@ -349,14 +367,19 @@
           ctx.clearRect(0, 0, width, height)
         }
 
+        // PARTICLES mode (Stage 1): static album-art reconstruction, not yet
+        // audio-driven, so it renders regardless of play/pause state.
+        if (this.vizMode === 'particles') {
+          this.drawParticles(ctx, width, height)
+          return
+        }
+
         if (!this.isPlaying) {
           return
         }
 
         if (this.vizMode === 'spectrum') {
           this.drawSpectrum(ctx, width, height)
-        } else if (this.vizMode === 'sonar') {
-          this.drawSonar(ctx, width, height)
         } else if (this.vizMode === 'lissajous') {
           this.drawLissajous(ctx, width, height)
         } else if (this.vizMode === 'vfd') {
@@ -390,67 +413,6 @@
           ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.7)`
           ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.35 + value * 0.65})`
           ctx.fillRect(x + 1, y, barWidth - 2, barHeight)
-        }
-      },
-      drawSonar(ctx: CanvasRenderingContext2D, width: number, height: number) {
-        const data = this.playerStore.getFrequencyData()
-        if (data.length === 0) {
-          return
-        }
-
-        const cx = width / 2
-        const cy = height / 2
-        const maxRadius = Math.min(width, height) / 2 - 8
-
-        // grid rings + crosshair, amber-dim, matching the RadarSweep widget
-        ctx.strokeStyle = 'rgba(255, 122, 26, 0.25)'
-        ctx.lineWidth = 1
-        for (const frac of [0.25, 0.5, 0.75, 1]) {
-          ctx.beginPath()
-          ctx.arc(cx, cy, maxRadius * frac, 0, Math.PI * 2)
-          ctx.stroke()
-        }
-        ctx.beginPath()
-        ctx.moveTo(cx - maxRadius, cy)
-        ctx.lineTo(cx + maxRadius, cy)
-        ctx.moveTo(cx, cy - maxRadius)
-        ctx.lineTo(cx, cy + maxRadius)
-        ctx.stroke()
-
-        // rotating sweep line
-        const angle = (Date.now() / 1000) % (Math.PI * 2)
-        const sweepX = cx + Math.cos(angle) * maxRadius
-        const sweepY = cy + Math.sin(angle) * maxRadius
-        const sweepGradient = ctx.createLinearGradient(cx, cy, sweepX, sweepY)
-        sweepGradient.addColorStop(0, 'rgba(255, 122, 26, 0)')
-        sweepGradient.addColorStop(1, 'rgba(255, 122, 26, 0.9)')
-        ctx.strokeStyle = sweepGradient
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(cx, cy)
-        ctx.lineTo(sweepX, sweepY)
-        ctx.stroke()
-
-        // frequency bins plotted as blips around the circle
-        const binCount = 48
-        const step = Math.floor(data.length / binCount)
-        for (let i = 0; i < binCount; i++) {
-          const value = data[i * step] / 255
-          if (value < 0.08) {
-            continue
-          }
-          const binAngle = (i / binCount) * Math.PI * 2
-          const radius = maxRadius * (0.15 + value * 0.85)
-          const x = cx + Math.cos(binAngle) * radius
-          const y = cy + Math.sin(binAngle) * radius
-          const [r, g, b] = lerpColor(value)
-
-          ctx.beginPath()
-          ctx.arc(x, y, 2 + value * 3, 0, Math.PI * 2)
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.4 + value * 0.6})`
-          ctx.shadowBlur = 6
-          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.8)`
-          ctx.fill()
         }
       },
       // True XY/Lissajous oscilloscope mode: X = left channel amplitude,
@@ -531,6 +493,162 @@
           ctx.fillStyle = 'rgba(255, 200, 140, 0.95)'
           ctx.shadowBlur = 16
           ctx.shadowColor = 'rgba(255, 160, 60, 1)'
+          ctx.fill()
+        }
+        ctx.shadowBlur = 0
+      },
+      // PARTICLES mode — Stage 1 (static reconstruction, no audio yet):
+      // sample the current track's album art on an offscreen canvas and
+      // rebuild it as a field of single-tone glowing dots, one per bright-
+      // enough grid point. Rebuilt only when the art URL changes; drawn
+      // fresh every frame from the cached particlePoints.
+      buildParticles(imgSrc: string, canvasWidth: number, canvasHeight: number) {
+        this.particleArtSrc = imgSrc
+        this.particlePoints.length = 0
+        if (!imgSrc) {
+          return
+        }
+
+        // The rendered field is always letterboxed into this square size
+        // (see drawParticles) regardless of the source image's own pixel
+        // dimensions — so the sampling step must be derived from THAT, not
+        // from the source resolution. A fixed source-pixel step (e.g. every
+        // 4px of a 1000px-wide cover) produces wildly different on-screen
+        // density between a small and a large source image; sizing it here
+        // keeps on-screen particle spacing at ~PARTICLE_SAMPLE_STEP px no
+        // matter what resolution the art came in at.
+        const renderSize = Math.min(canvasWidth, canvasHeight) - 16
+
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.onload = () => {
+          // Stale by the time it loads (track changed again) — drop it.
+          if (this.particleArtSrc !== imgSrc) {
+            return
+          }
+          const off = document.createElement('canvas')
+          off.width = img.naturalWidth
+          off.height = img.naturalHeight
+          const offCtx = off.getContext('2d')
+          if (!offCtx) {
+            return
+          }
+          offCtx.drawImage(img, 0, 0)
+          let pixels: ImageData
+          try {
+            pixels = offCtx.getImageData(0, 0, off.width, off.height)
+          } catch (err) {
+            // Cross-origin art (no CORS headers) taints the canvas — fail
+            // quietly rather than throwing inside an image load handler.
+            console.warn('PARTICLES: could not read album art pixel data', err)
+            return
+          }
+
+          const stepX = Math.max(1, Math.round(off.width / (renderSize / PARTICLE_SAMPLE_STEP)))
+          const stepY = Math.max(1, Math.round(off.height / (renderSize / PARTICLE_SAMPLE_STEP)))
+
+          const points: { x: number, y: number, lum: number, angle: number }[] = []
+          for (let py = 0; py < off.height; py += stepY) {
+            for (let px = 0; px < off.width; px += stepX) {
+              const idx = (py * off.width + px) * 4
+              const r = pixels.data[idx]
+              const g = pixels.data[idx + 1]
+              const b = pixels.data[idx + 2]
+              const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+              if (lum < PARTICLE_LUMINANCE_MIN) {
+                continue
+              }
+              // Stable per-particle jitter direction (fixed at build time) so
+              // audio-driven displacement reads as organic wobble in a
+              // consistent direction, not per-frame noise.
+              points.push({ x: px / off.width, y: py / off.height, lum, angle: Math.random() * Math.PI * 2 })
+            }
+          }
+          this.particlePoints = markRaw(points)
+        }
+        img.src = imgSrc
+      },
+      drawParticles(ctx: CanvasRenderingContext2D, width: number, height: number) {
+        // Solid backdrop so the reconstruction reads at consistent contrast
+        // regardless of the current album's own colors/brightness — the
+        // particles are the only visible content, never the raw photo.
+        ctx.fillStyle = 'rgb(10, 8, 0)'
+        ctx.fillRect(0, 0, width, height)
+
+        const imgSrc = this.track?.image || ''
+        if (imgSrc !== this.particleArtSrc) {
+          this.buildParticles(imgSrc, width, height)
+        }
+        if (this.particlePoints.length === 0) {
+          return
+        }
+
+        // Overall amplitude (0-1) from the live frequency data, used to drive
+        // PULSE (size/brightness) and BREATHING (field scale). Zero (no
+        // track loaded / paused) collapses back to the plain Stage 1 render.
+        const data = this.playerStore.getFrequencyData()
+        let amp = 0
+        if (data.length > 0) {
+          let sum = 0
+          for (let i = 0; i < data.length; i++) {
+            sum += data[i]
+          }
+          amp = sum / data.length / 255
+        }
+
+        // Fit the (square) sampled art into the canvas letterboxed, so
+        // particles aren't stretched off the album art's actual aspect.
+        // BREATHING: the whole field scales very slightly with amplitude.
+        const breathScale = 1 + amp * PARTICLE_BREATH_STRENGTH
+        const size = (Math.min(width, height) - 16) * breathScale
+        const offsetX = (width - size) / 2
+        const offsetY = (height - size) / 2
+        // Sampling now targets ~PARTICLE_SAMPLE_STEP px of on-screen spacing
+        // directly (see buildParticles), so the dot radius can be derived
+        // from that same on-screen constant instead of the source image's
+        // resolution.
+        const baseDotRadius = Math.max(1, PARTICLE_SAMPLE_STEP * 0.48)
+        // PULSE: overall amplitude subtly grows particle size/brightness.
+        const dotRadius = baseDotRadius * (1 + amp * PARTICLE_PULSE_STRENGTH)
+        const [r, g, b] = CYAN
+
+        const positions: { x: number, y: number, alpha: number }[] = []
+        for (const p of this.particlePoints) {
+          // DISPLACEMENT: each particle jitters from its home position along
+          // a fixed-per-particle direction, scaled by the frequency bin its
+          // horizontal position maps to — so different regions of the image
+          // react to different parts of the spectrum.
+          let dx = 0
+          let dy = 0
+          if (data.length > 0) {
+            const bin = data[Math.floor(p.x * (data.length - 1))] / 255
+            const displace = bin * PARTICLE_MAX_DISPLACEMENT_PX
+            dx = Math.cos(p.angle) * displace
+            dy = Math.sin(p.angle) * displace
+          }
+          positions.push({
+            x: offsetX + p.x * size + dx,
+            y: offsetY + p.y * size + dy,
+            alpha: Math.min(1, 0.4 + p.lum * 0.6 + amp * 0.1),
+          })
+        }
+
+        // Dark halo pass — a soft near-black ring behind each particle, a
+        // second contrast safeguard independent of the backdrop fill above.
+        ctx.fillStyle = 'rgba(10, 8, 0, 0.55)'
+        for (const pos of positions) {
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, dotRadius * 1.9, 0, Math.PI * 2)
+          ctx.fill()
+        }
+
+        // Bright particle pass with the existing glow.
+        for (const pos of positions) {
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, dotRadius, 0, Math.PI * 2)
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${pos.alpha})`
+          ctx.shadowBlur = 4
+          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.7)`
           ctx.fill()
         }
         ctx.shadowBlur = 0
