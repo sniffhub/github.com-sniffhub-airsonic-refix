@@ -115,9 +115,6 @@ export const usePlayerStore = defineStore('player', {
     getFrequencyData(): Uint8Array {
       return audio.getFrequencyData()
     },
-    getTimeDomainData(): Uint8Array {
-      return audio.getTimeDomainData()
-    },
     getStereoTimeDomainData(): { left: Uint8Array, right: Uint8Array } {
       return audio.getStereoTimeDomainData()
     },

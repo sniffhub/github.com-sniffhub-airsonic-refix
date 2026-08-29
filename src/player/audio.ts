@@ -46,13 +46,6 @@ export class AudioController {
     return data
   }
 
-  // Byte time-domain data (raw waveform, 128 = silence) for an oscilloscope.
-  getTimeDomainData(): Uint8Array {
-    const data = new Uint8Array(this.analyser.fftSize)
-    this.analyser.getByteTimeDomainData(data)
-    return data
-  }
-
   // Left/right byte time-domain data, in sync, for an XY (Lissajous) scope.
   getStereoTimeDomainData(): { left: Uint8Array, right: Uint8Array } {
     const left = new Uint8Array(this.stereoAnalyser.left.fftSize)

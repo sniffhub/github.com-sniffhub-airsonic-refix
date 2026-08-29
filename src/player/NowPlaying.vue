@@ -45,9 +45,13 @@
           >
             {{ vizModeLabel }}
           </button>
-          <div v-if="modeTransitioning" class="viz-recalibrating">RECALIBRATING&hellip;</div>
+          <div v-if="modeTransitioning" class="viz-recalibrating">
+            RECALIBRATING&hellip;
+          </div>
           <div class="viz-readout" aria-hidden="true">
-            <div v-for="(line, i) in readoutLines" :key="i">{{ line }}</div>
+            <div v-for="(line, i) in readoutLines" :key="i">
+              {{ line }}
+            </div>
           </div>
         </div>
 
@@ -95,16 +99,69 @@
   import { defineComponent, markRaw } from 'vue'
   import ProgressBar from '@/player/ProgressBar.vue'
   import { usePlayerStore } from '@/player/store'
+  import { formatArtists } from '@/shared/utils'
 
-  type VizMode = 'spectrum' | 'sonar' | 'oscilloscope' | 'lissajous' | 'vfd'
+  type VizMode = 'spectrum' | 'sonar' | 'lissajous' | 'vfd' | 'dotmatrix'
 
   const VIZ_MODES: { mode: VizMode, label: string }[] = [
     { mode: 'spectrum', label: 'BARS' },
     { mode: 'sonar', label: 'SONAR' },
-    { mode: 'oscilloscope', label: 'SCOPE' },
     { mode: 'lissajous', label: 'XY' },
     { mode: 'vfd', label: 'VFD' },
+    { mode: 'dotmatrix', label: 'DOT-MATRIX' },
   ]
+
+  // Chunky 5x7 bitmap font for the DOT-MATRIX mode's bottom label — rendered
+  // with the same circular-dot technique as the rest of that mode, never a
+  // regular text font. '#' = lit cell, '.' = unlit. Unmapped characters fall
+  // back to a blank space rather than guessing a glyph.
+  const FONT_5X7: Record<string, string[]> = {
+    ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....'],
+    0: ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+    1: ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    2: ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+    3: ['.###.', '#...#', '....#', '..##.', '....#', '#...#', '.###.'],
+    4: ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+    5: ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+    6: ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+    7: ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+    8: ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+    9: ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+    A: ['..#..', '.#.#.', '#...#', '#...#', '#####', '#...#', '#...#'],
+    B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
+    C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+    D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+    E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+    F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+    G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+    H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+    I: ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+    J: ['..###', '...#.', '...#.', '...#.', '...#.', '#..#.', '.##..'],
+    K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+    L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+    M: ['#...#', '##.##', '#.#.#', '#...#', '#...#', '#...#', '#...#'],
+    N: ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
+    O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
+    R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+    S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+    T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+    U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
+    W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '#.#.#', '.#.#.'],
+    X: ['#...#', '#...#', '.#.#.', '..#..', '.#.#.', '#...#', '#...#'],
+    Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+    Z: ['#####', '....#', '...#.', '..#..', '.#...', '#....', '#####'],
+    '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....'],
+    ':': ['.....', '..#..', '.....', '.....', '..#..', '.....', '.....'],
+    '.': ['.....', '.....', '.....', '.....', '.....', '..#..', '.....'],
+    "'": ['..#..', '..#..', '.....', '.....', '.....', '.....', '.....'],
+    '/': ['....#', '...#.', '..#..', '.#...', '#....', '.....', '.....'],
+    '!': ['..#..', '..#..', '..#..', '..#..', '.....', '..#..', '.....'],
+    '?': ['.###.', '#...#', '....#', '..##.', '..#..', '.....', '..#..'],
+    '&': ['.##..', '#..#.', '#.#..', '.#...', '#.#.#', '#..#.', '.##.#'],
+  }
 
   const AMBER: [number, number, number] = [255, 122, 26]
   const CYAN: [number, number, number] = [34, 211, 238]
@@ -167,6 +224,16 @@
       },
       vizModeLabel(): string {
         return VIZ_MODES[this.vizModeIndex].label
+      },
+      // Real track info for the DOT-MATRIX bottom marquee — never fabricated
+      // placeholder text. Falls back to the mode label when nothing's queued.
+      dotMatrixLabel(): string {
+        if (!this.track) {
+          return 'DOT-MATRIX'
+        }
+        const title = this.streamTitle || this.track.title
+        const artist = this.track.artists.length > 0 ? formatArtists(this.track.artists) : this.track.album
+        return artist ? `${title} - ${artist}` : title
       },
       // Corner data-readout HUD — only genuinely available values, no
       // invented numbers (there's no BPM/bitrate field on Track).
@@ -290,12 +357,12 @@
           this.drawSpectrum(ctx, width, height)
         } else if (this.vizMode === 'sonar') {
           this.drawSonar(ctx, width, height)
-        } else if (this.vizMode === 'oscilloscope') {
-          this.drawOscilloscope(ctx, width, height)
         } else if (this.vizMode === 'lissajous') {
           this.drawLissajous(ctx, width, height)
-        } else {
+        } else if (this.vizMode === 'vfd') {
           this.drawVfd(ctx, width, height)
+        } else {
+          this.drawDotMatrix(ctx, width, height)
         }
       },
       // Deliberate exception to the single-tone-amber rule used everywhere
@@ -385,51 +452,6 @@
           ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.8)`
           ctx.fill()
         }
-      },
-      drawOscilloscope(ctx: CanvasRenderingContext2D, width: number, height: number) {
-        const data = this.playerStore.getTimeDomainData()
-        if (data.length === 0) {
-          return
-        }
-
-        const cx = width / 2
-        const cy = height / 2
-        const maxRadius = Math.min(width, height) / 2 - 8
-
-        // circular grid, matching the sonar mode / Smith-chart reference look
-        ctx.strokeStyle = 'rgba(34, 211, 238, 0.2)'
-        ctx.lineWidth = 1
-        for (const frac of [0.33, 0.66, 1]) {
-          ctx.beginPath()
-          ctx.arc(cx, cy, maxRadius * frac, 0, Math.PI * 2)
-          ctx.stroke()
-        }
-        ctx.beginPath()
-        ctx.moveTo(cx - maxRadius, cy)
-        ctx.lineTo(cx + maxRadius, cy)
-        ctx.moveTo(cx, cy - maxRadius)
-        ctx.lineTo(cx, cy + maxRadius)
-        ctx.stroke()
-
-        // waveform line across the middle
-        ctx.beginPath()
-        const sliceWidth = width / data.length
-        let x = 0
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128
-          const y = cy + v * (height / 2 - 10)
-          if (i === 0) {
-            ctx.moveTo(x, y)
-          } else {
-            ctx.lineTo(x, y)
-          }
-          x += sliceWidth
-        }
-        ctx.strokeStyle = 'rgba(34, 211, 238, 0.9)'
-        ctx.shadowBlur = 10
-        ctx.shadowColor = 'rgba(34, 211, 238, 0.8)'
-        ctx.lineWidth = 2
-        ctx.stroke()
       },
       // True XY/Lissajous oscilloscope mode: X = left channel amplitude,
       // Y = right channel amplitude, plotted against each other rather than
@@ -582,6 +604,103 @@
             ctx.shadowColor = 'rgba(255, 250, 230, 1)'
             ctx.fillStyle = 'rgba(255, 250, 230, 1)'
             ctx.fillRect(x, peakY, barWidth, segHeight)
+          }
+        }
+        ctx.shadowBlur = 0
+      },
+      // Retro car-stereo dot-matrix display: a coarse grid of filled circles
+      // (never square pixels — that's the detail that reads as authentic
+      // LED/VFD matrix rather than generic pixelation), single cyan-on-black,
+      // no amber/gradient. Top rows are an audio-reactive spectrum; the
+      // bottom rows are a scrolling marquee of real track info, rendered in
+      // the same circular-dot technique via a hand-rolled 5x7 bitmap font.
+      drawDotMatrix(ctx: CanvasRenderingContext2D, width: number, height: number) {
+        const data = this.playerStore.getFrequencyData()
+        if (data.length === 0) {
+          return
+        }
+
+        const cols = 48
+        const rows = 24
+        const textRows = 8 // 7px glyph + 1px gap, reserved at the bottom
+        const vizRows = rows - textRows
+        const cellW = width / cols
+        const cellH = height / rows
+        const dotRadius = Math.min(cellW, cellH) * 0.38
+        const CYAN = '34, 211, 238'
+
+        const step = Math.floor(data.length / cols)
+        for (let c = 0; c < cols; c++) {
+          const value = data[c * step] / 255
+          const lit = Math.round(value * vizRows)
+          const cx = c * cellW + cellW / 2
+          for (let r = 0; r < vizRows; r++) {
+            const rowFromBottom = vizRows - 1 - r
+            const on = rowFromBottom < lit
+            const cy = r * cellH + cellH / 2
+            ctx.beginPath()
+            ctx.arc(cx, cy, on ? dotRadius : dotRadius * 0.55, 0, Math.PI * 2)
+            if (on) {
+              const alpha = Math.min(1, 0.55 + (rowFromBottom / vizRows) * 0.45)
+              ctx.shadowBlur = 5
+              ctx.shadowColor = `rgba(${CYAN}, 0.9)`
+              ctx.fillStyle = `rgba(${CYAN}, ${alpha})`
+            } else {
+              ctx.shadowBlur = 0
+              ctx.fillStyle = `rgba(${CYAN}, 0.06)`
+            }
+            ctx.fill()
+          }
+        }
+        ctx.shadowBlur = 0
+
+        // Scrolling marquee label, dead rows dimly lit so the whole grid
+        // still reads as one continuous matrix rather than two panels.
+        const label = this.dotMatrixLabel.toUpperCase()
+        const charCols = 6 // 5px glyph + 1px gap
+        const textPxWidth = label.length * charCols
+        const SCROLL_COLS_PER_SEC = 5
+        const scrollable = textPxWidth > cols
+        const offset = scrollable
+          ? Math.floor((Date.now() / 1000) * SCROLL_COLS_PER_SEC) % (textPxWidth + cols)
+          : 0
+        const startCol = scrollable ? cols - offset : Math.floor((cols - textPxWidth) / 2)
+
+        for (let r = 0; r < textRows - 1; r++) {
+          for (let c = 0; c < cols; c++) {
+            const cx = c * cellW + cellW / 2
+            const cy = (vizRows + r) * cellH + cellH / 2
+            ctx.beginPath()
+            ctx.arc(cx, cy, dotRadius * 0.55, 0, Math.PI * 2)
+            ctx.fillStyle = `rgba(${CYAN}, 0.06)`
+            ctx.fill()
+          }
+        }
+        for (let i = 0; i < label.length; i++) {
+          const glyph = FONT_5X7[label[i]] || FONT_5X7[' ']
+          const baseCol = startCol + i * charCols
+          if (baseCol + 5 < 0 || baseCol >= cols) {
+            continue
+          }
+          for (let gr = 0; gr < 7; gr++) {
+            const rowStr = glyph[gr]
+            for (let gc = 0; gc < 5; gc++) {
+              if (rowStr[gc] !== '#') {
+                continue
+              }
+              const col = baseCol + gc
+              if (col < 0 || col >= cols) {
+                continue
+              }
+              const cx = col * cellW + cellW / 2
+              const cy = (vizRows + gr) * cellH + cellH / 2
+              ctx.beginPath()
+              ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2)
+              ctx.shadowBlur = 6
+              ctx.shadowColor = `rgba(${CYAN}, 1)`
+              ctx.fillStyle = `rgba(${CYAN}, 0.95)`
+              ctx.fill()
+            }
           }
         }
         ctx.shadowBlur = 0
