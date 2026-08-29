@@ -33,6 +33,9 @@
         <div class="now-playing-art">
           <img v-if="track.image" :src="track.image" :alt="track.title">
           <img v-else src="@/shared/assets/fallback.svg" :alt="track.title">
+          <!-- Small ambient accent, not a data readout — purely decorative,
+               so it's fine that it has no relation to the actual track. -->
+          <canvas ref="globeCanvas" class="globe-accent" width="64" height="64" aria-hidden="true" />
         </div>
 
         <div class="now-playing-viz-wrap" :class="{ 'mode-glitch': modeTransitioning }">
@@ -179,17 +182,26 @@
   const LISSAJOUS_TRAIL_MS = 900
   const MODE_GLITCH_MS = 180 // matches BootSequence's glitch-flicker timing
 
-  // PARTICLES mode (Stage 1 — static reconstruction, no audio yet): grid
-  // interval (px) at which the album art is sampled, and the luminance
-  // threshold below which a sampled pixel is skipped entirely (too dark to
-  // read as part of the image).
-  const PARTICLE_SAMPLE_STEP = 4
+  // PARTICLES mode: the real album art renders as the base layer (cover-fit
+  // into the full canvas, no letterboxing), with an audio-reactive particle
+  // field as a translucent overlay on top. Grid interval (px, on-screen) at
+  // which the art is sampled for overlay motes, and the luminance threshold
+  // below which a sampled pixel is skipped entirely (too dark to read).
+  const PARTICLE_SAMPLE_STEP = 8
   const PARTICLE_LUMINANCE_MIN = 0.08
-  // Stage 2 audio-reactivity tuning — kept modest so the reconstruction stays
-  // recognizable; these are the first values to raise if it still reads static.
+  // Audio-reactivity tuning — kept modest so the overlay adds life without
+  // swamping the photo; these are the first values to raise if it reads flat.
   const PARTICLE_PULSE_STRENGTH = 0.5 // overall amplitude -> size/brightness boost
   const PARTICLE_MAX_DISPLACEMENT_PX = 3 // per-particle jitter from home position
-  const PARTICLE_BREATH_STRENGTH = 0.025 // whole-field scale pulse
+  // Overlay motes stay translucent so the real photo reads through underneath
+  // — this is the "light dust of glowing motes" ceiling, not per-particle alpha.
+  const PARTICLE_OVERLAY_OPACITY = 0.45
+
+  // Small rotating wireframe globe accent (decorative only, no audio link):
+  // period of one full slow rotation, and a fixed axial tilt so it reads as
+  // a sphere rather than a flat spinning disc.
+  const GLOBE_ROTATION_PERIOD_MS = 42000
+  const GLOBE_TILT_RAD = 0.45
 
   export default defineComponent({
     components: {
@@ -213,6 +225,15 @@
         // frame during draw.
         particlePoints: markRaw([] as { x: number, y: number, lum: number, angle: number }[]),
         particleArtSrc: '',
+        // Cached, already-loaded Image for the current track's art — drawn
+        // directly as the PARTICLES base layer every frame. Non-reactive.
+        particleArtImage: null as HTMLImageElement | null,
+        // Pre-rendered radial-gradient glow sprite, built once and reused via
+        // drawImage for every particle — avoids per-particle ctx.shadowBlur,
+        // which forces a blur recompute on every single draw call and was
+        // the dominant cost of PARTICLES mode (shadowBlur, not particle
+        // count, was the actual bottleneck).
+        particleGlowSprite: null as HTMLCanvasElement | null,
         // VFD peak-hold: per-bar running max (0-1) and remaining hold-frame
         // count before it starts falling. Non-reactive, mutated every frame.
         vfdPeaks: markRaw([] as number[]),
@@ -357,6 +378,16 @@
         const width = canvas.width
         const height = canvas.height
 
+        // Decorative wireframe globe accent — always spins, independent of
+        // viz mode / play state / audio, so it renders every frame here.
+        const globeCanvas = this.$refs.globeCanvas as HTMLCanvasElement | undefined
+        if (globeCanvas) {
+          const gctx = globeCanvas.getContext('2d')
+          if (gctx) {
+            this.drawGlobe(gctx, globeCanvas.width, globeCanvas.height)
+          }
+        }
+
         if (this.vizMode === 'lissajous') {
           // Fading trail instead of a hard clear, for a glowing-phosphor
           // trace look instead of a redrawn-from-scratch frame. Slightly
@@ -497,27 +528,18 @@
         }
         ctx.shadowBlur = 0
       },
-      // PARTICLES mode — Stage 1 (static reconstruction, no audio yet):
-      // sample the current track's album art on an offscreen canvas and
-      // rebuild it as a field of single-tone glowing dots, one per bright-
-      // enough grid point. Rebuilt only when the art URL changes; drawn
-      // fresh every frame from the cached particlePoints.
+      // PARTICLES mode: sample the current track's album art on an offscreen
+      // canvas into a field of grid points (kept as fractions 0-1 of the
+      // source image's own dimensions), used to scatter the audio-reactive
+      // overlay motes drawn on top of the real photo in drawParticles.
+      // Rebuilt only when the art URL changes.
       buildParticles(imgSrc: string, canvasWidth: number, canvasHeight: number) {
         this.particleArtSrc = imgSrc
         this.particlePoints.length = 0
+        this.particleArtImage = null
         if (!imgSrc) {
           return
         }
-
-        // The rendered field is always letterboxed into this square size
-        // (see drawParticles) regardless of the source image's own pixel
-        // dimensions — so the sampling step must be derived from THAT, not
-        // from the source resolution. A fixed source-pixel step (e.g. every
-        // 4px of a 1000px-wide cover) produces wildly different on-screen
-        // density between a small and a large source image; sizing it here
-        // keeps on-screen particle spacing at ~PARTICLE_SAMPLE_STEP px no
-        // matter what resolution the art came in at.
-        const renderSize = Math.min(canvasWidth, canvasHeight) - 16
 
         const img = new Image()
         img.crossOrigin = 'anonymous'
@@ -526,6 +548,8 @@
           if (this.particleArtSrc !== imgSrc) {
             return
           }
+          this.particleArtImage = markRaw(img)
+
           const off = document.createElement('canvas')
           off.width = img.naturalWidth
           off.height = img.naturalHeight
@@ -540,16 +564,37 @@
           } catch (err) {
             // Cross-origin art (no CORS headers) taints the canvas — fail
             // quietly rather than throwing inside an image load handler.
+            // The real photo (drawn via drawImage, not getImageData) still
+            // renders fine; only the particle overlay is skipped.
             console.warn('PARTICLES: could not read album art pixel data', err)
             return
           }
 
-          const stepX = Math.max(1, Math.round(off.width / (renderSize / PARTICLE_SAMPLE_STEP)))
-          const stepY = Math.max(1, Math.round(off.height / (renderSize / PARTICLE_SAMPLE_STEP)))
+          // Sample in SCREEN space (canvas pixels), not source-image space,
+          // so particle count is bounded by the canvas's own on-screen area
+          // (~canvasWidth/step * canvasHeight/step) no matter the art's
+          // native resolution. The old image-space step (PARTICLE_SAMPLE_STEP
+          // / coverScale) collapsed to 1 whenever the art was smaller than
+          // the canvas, sampling every source pixel — e.g. a 300x300 cover
+          // produced ~89,000 particles, each drawn twice with shadowBlur
+          // every frame, tanking framerate regardless of on-screen size.
+          const coverScale = Math.max(canvasWidth / off.width, canvasHeight / off.height)
+          const drawWidth = off.width * coverScale
+          const drawHeight = off.height * coverScale
+          const dx = (canvasWidth - drawWidth) / 2
+          const dy = (canvasHeight - drawHeight) / 2
 
           const points: { x: number, y: number, lum: number, angle: number }[] = []
-          for (let py = 0; py < off.height; py += stepY) {
-            for (let px = 0; px < off.width; px += stepX) {
+          for (let sy = 0; sy < canvasHeight; sy += PARTICLE_SAMPLE_STEP) {
+            const py = Math.floor((sy - dy) / coverScale)
+            if (py < 0 || py >= off.height) {
+              continue
+            }
+            for (let sx = 0; sx < canvasWidth; sx += PARTICLE_SAMPLE_STEP) {
+              const px = Math.floor((sx - dx) / coverScale)
+              if (px < 0 || px >= off.width) {
+                continue
+              }
               const idx = (py * off.width + px) * 4
               const r = pixels.data[idx]
               const g = pixels.data[idx + 1]
@@ -561,7 +606,7 @@
               // Stable per-particle jitter direction (fixed at build time) so
               // audio-driven displacement reads as organic wobble in a
               // consistent direction, not per-frame noise.
-              points.push({ x: px / off.width, y: py / off.height, lum, angle: Math.random() * Math.PI * 2 })
+              points.push({ x: sx / canvasWidth, y: sy / canvasHeight, lum, angle: Math.random() * Math.PI * 2 })
             }
           }
           this.particlePoints = markRaw(points)
@@ -569,23 +614,37 @@
         img.src = imgSrc
       },
       drawParticles(ctx: CanvasRenderingContext2D, width: number, height: number) {
-        // Solid backdrop so the reconstruction reads at consistent contrast
-        // regardless of the current album's own colors/brightness — the
-        // particles are the only visible content, never the raw photo.
-        ctx.fillStyle = 'rgb(10, 8, 0)'
-        ctx.fillRect(0, 0, width, height)
-
         const imgSrc = this.track?.image || ''
         if (imgSrc !== this.particleArtSrc) {
           this.buildParticles(imgSrc, width, height)
         }
+
+        const img = this.particleArtImage
+        if (!img) {
+          // Art hasn't loaded yet (or track has none) — plain backdrop so
+          // the canvas isn't left showing stale content from a prior track.
+          ctx.fillStyle = 'rgb(10, 8, 0)'
+          ctx.fillRect(0, 0, width, height)
+          return
+        }
+
+        // Base layer: the real album art, cover-fit into the FULL canvas
+        // (crop-to-fill, same semantics as the art thumbnail above) — no
+        // letterboxing, no square crop, fills the whole width/height.
+        const coverScale = Math.max(width / img.naturalWidth, height / img.naturalHeight)
+        const drawWidth = img.naturalWidth * coverScale
+        const drawHeight = img.naturalHeight * coverScale
+        const dx = (width - drawWidth) / 2
+        const dy = (height - drawHeight) / 2
+        ctx.drawImage(img, dx, dy, drawWidth, drawHeight)
+
         if (this.particlePoints.length === 0) {
           return
         }
 
-        // Overall amplitude (0-1) from the live frequency data, used to drive
-        // PULSE (size/brightness) and BREATHING (field scale). Zero (no
-        // track loaded / paused) collapses back to the plain Stage 1 render.
+        // Overall amplitude (0-1) from the live frequency data, used to
+        // drive PULSE (size/brightness). Zero (no track loaded / paused)
+        // collapses the overlay back to its resting size/brightness.
         const data = this.playerStore.getFrequencyData()
         let amp = 0
         if (data.length > 0) {
@@ -596,21 +655,9 @@
           amp = sum / data.length / 255
         }
 
-        // Fit the (square) sampled art into the canvas letterboxed, so
-        // particles aren't stretched off the album art's actual aspect.
-        // BREATHING: the whole field scales very slightly with amplitude.
-        const breathScale = 1 + amp * PARTICLE_BREATH_STRENGTH
-        const size = (Math.min(width, height) - 16) * breathScale
-        const offsetX = (width - size) / 2
-        const offsetY = (height - size) / 2
-        // Sampling now targets ~PARTICLE_SAMPLE_STEP px of on-screen spacing
-        // directly (see buildParticles), so the dot radius can be derived
-        // from that same on-screen constant instead of the source image's
-        // resolution.
         const baseDotRadius = Math.max(1, PARTICLE_SAMPLE_STEP * 0.48)
         // PULSE: overall amplitude subtly grows particle size/brightness.
         const dotRadius = baseDotRadius * (1 + amp * PARTICLE_PULSE_STRENGTH)
-        const [r, g, b] = CYAN
 
         const positions: { x: number, y: number, alpha: number }[] = []
         for (const p of this.particlePoints) {
@@ -618,39 +665,136 @@
           // a fixed-per-particle direction, scaled by the frequency bin its
           // horizontal position maps to — so different regions of the image
           // react to different parts of the spectrum.
-          let dx = 0
-          let dy = 0
+          let jitterX = 0
+          let jitterY = 0
           if (data.length > 0) {
             const bin = data[Math.floor(p.x * (data.length - 1))] / 255
             const displace = bin * PARTICLE_MAX_DISPLACEMENT_PX
-            dx = Math.cos(p.angle) * displace
-            dy = Math.sin(p.angle) * displace
+            jitterX = Math.cos(p.angle) * displace
+            jitterY = Math.sin(p.angle) * displace
           }
           positions.push({
-            x: offsetX + p.x * size + dx,
-            y: offsetY + p.y * size + dy,
-            alpha: Math.min(1, 0.4 + p.lum * 0.6 + amp * 0.1),
+            x: p.x * width + jitterX,
+            y: p.y * height + jitterY,
+            alpha: Math.min(1, (0.4 + p.lum * 0.6 + amp * 0.1) * PARTICLE_OVERLAY_OPACITY),
           })
         }
 
-        // Dark halo pass — a soft near-black ring behind each particle, a
-        // second contrast safeguard independent of the backdrop fill above.
-        ctx.fillStyle = 'rgba(10, 8, 0, 0.55)'
+        // Dark halo pass — a soft, translucent ring behind each particle so
+        // the overlay motes read against any photo regardless of its own
+        // colors, without going as opaque as the old solid-backdrop version
+        // (the photo underneath must stay visible).
+        ctx.fillStyle = `rgba(10, 8, 0, ${0.3 * PARTICLE_OVERLAY_OPACITY + 0.1})`
         for (const pos of positions) {
           ctx.beginPath()
-          ctx.arc(pos.x, pos.y, dotRadius * 1.9, 0, Math.PI * 2)
+          ctx.arc(pos.x, pos.y, dotRadius * 1.7, 0, Math.PI * 2)
           ctx.fill()
         }
 
-        // Bright particle pass with the existing glow.
-        for (const pos of positions) {
-          ctx.beginPath()
-          ctx.arc(pos.x, pos.y, dotRadius, 0, Math.PI * 2)
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${pos.alpha})`
-          ctx.shadowBlur = 4
-          ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.7)`
-          ctx.fill()
+        // Bright particle pass, glow baked into a pre-rendered sprite and
+        // stamped via drawImage — reads as the same glowing-dust look as
+        // ctx.shadowBlur but without recomputing a blur on every draw call.
+        if (!this.particleGlowSprite) {
+          this.particleGlowSprite = markRaw(this.buildParticleGlowSprite())
         }
+        const sprite = this.particleGlowSprite
+        const glowDiameter = dotRadius * 3.4
+        for (const pos of positions) {
+          ctx.globalAlpha = pos.alpha
+          ctx.drawImage(sprite, pos.x - glowDiameter / 2, pos.y - glowDiameter / 2, glowDiameter, glowDiameter)
+        }
+        ctx.globalAlpha = 1
+      },
+      // Builds the cyan radial-gradient sprite used by the PARTICLES bright
+      // pass above — built once and cached, not per frame.
+      buildParticleGlowSprite(): HTMLCanvasElement {
+        const size = 64
+        const c = document.createElement('canvas')
+        c.width = size
+        c.height = size
+        const sctx = c.getContext('2d')!
+        const cx = size / 2
+        const [r, g, b] = CYAN
+        const grad = sctx.createRadialGradient(cx, cx, 0, cx, cx, cx)
+        grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1)`)
+        grad.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, 0.7)`)
+        grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`)
+        sctx.fillStyle = grad
+        sctx.fillRect(0, 0, size, size)
+        return c
+      },
+      // Small rotating wireframe globe accent — thin amber/cyan latitude
+      // (parallel) and longitude (meridian) arcs on a unit sphere, rotated
+      // around the vertical axis with a fixed tilt and projected orthographi-
+      // cally onto the 2D canvas. Basic trigonometry only, no 3D library —
+      // this is a decorative accent, not a real 3D scene.
+      drawGlobe(ctx: CanvasRenderingContext2D, width: number, height: number) {
+        ctx.clearRect(0, 0, width, height)
+
+        const cx = width / 2
+        const cy = height / 2
+        const radius = Math.min(width, height) / 2 - 3
+        const rotY = this.reducedMotion
+          ? 0
+          : ((performance.now() % GLOBE_ROTATION_PERIOD_MS) / GLOBE_ROTATION_PERIOD_MS) * Math.PI * 2
+
+        const project = (lat: number, lon: number): { x: number, y: number, z: number } => {
+          const x0 = Math.cos(lat) * Math.sin(lon)
+          const y0 = Math.sin(lat)
+          const z0 = Math.cos(lat) * Math.cos(lon)
+          // Spin around the vertical (Y) axis...
+          const x1 = x0 * Math.cos(rotY) + z0 * Math.sin(rotY)
+          const z1 = -x0 * Math.sin(rotY) + z0 * Math.cos(rotY)
+          // ...then a fixed axial tilt, so it reads as a sphere rather than
+          // a flat spinning disc.
+          const y1 = y0 * Math.cos(GLOBE_TILT_RAD) - z1 * Math.sin(GLOBE_TILT_RAD)
+          const z2 = y0 * Math.sin(GLOBE_TILT_RAD) + z1 * Math.cos(GLOBE_TILT_RAD)
+          return { x: cx + x1 * radius, y: cy - y1 * radius, z: z2 }
+        }
+
+        const SEGMENTS = 16
+        const MERIDIANS = 6
+        const PARALLELS = 3
+
+        const strokeArc = (points: { x: number, y: number, z: number }[], rgb: [number, number, number]) => {
+          const [r, g, b] = rgb
+          for (let i = 1; i < points.length; i++) {
+            const a = points[i - 1]
+            const p = points[i]
+            // Depth-based alpha (no real hidden-line removal — just a cheap
+            // pseudo-3D read: far-side arcs fade, near-side arcs glow).
+            const alpha = 0.12 + 0.5 * ((p.z + radius) / (2 * radius))
+            ctx.beginPath()
+            ctx.moveTo(a.x, a.y)
+            ctx.lineTo(p.x, p.y)
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`
+            ctx.lineWidth = 0.75
+            ctx.shadowBlur = 2
+            ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha})`
+            ctx.stroke()
+          }
+        }
+
+        for (let m = 0; m < MERIDIANS; m++) {
+          const lon = (m / MERIDIANS) * Math.PI * 2
+          const points: { x: number, y: number, z: number }[] = []
+          for (let s = 0; s <= SEGMENTS; s++) {
+            const lat = -Math.PI / 2 + (s / SEGMENTS) * Math.PI
+            points.push(project(lat, lon))
+          }
+          strokeArc(points, m % 2 === 0 ? AMBER : CYAN)
+        }
+
+        for (let p = 1; p <= PARALLELS; p++) {
+          const lat = -Math.PI / 2 + (p / (PARALLELS + 1)) * Math.PI
+          const points: { x: number, y: number, z: number }[] = []
+          for (let s = 0; s <= SEGMENTS; s++) {
+            const lon = (s / SEGMENTS) * Math.PI * 2
+            points.push(project(lat, lon))
+          }
+          strokeArc(points, p % 2 === 0 ? AMBER : CYAN)
+        }
+
         ctx.shadowBlur = 0
       },
       // Retro car-stereo VFD spectrum analyzer: discrete glowing segments
@@ -986,6 +1130,7 @@
   }
 
   .now-playing-art {
+    position: relative;
     width: min(200px, 40vw);
     aspect-ratio: 1 / 1;
     border: 1px solid var(--term-amber-dim);
@@ -996,6 +1141,18 @@
     height: 100%;
     object-fit: cover;
     display: block;
+  }
+
+  /* Small ambient wireframe-globe accent, corner-badge sized — decorative
+     only, never dominant. */
+  .globe-accent {
+    position: absolute;
+    bottom: -12px;
+    right: -12px;
+    width: 44px;
+    height: 44px;
+    pointer-events: none;
+    z-index: 2;
   }
 
   .now-playing-viz-wrap {
