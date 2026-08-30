@@ -30,67 +30,79 @@
           <Icon icon="chevron-left" /> QUEUE
         </router-link>
 
-        <div class="now-playing-art">
-          <img v-if="track.image" :src="track.image" :alt="track.title">
-          <img v-else src="@/shared/assets/fallback.svg" :alt="track.title">
-          <!-- Small ambient accent, not a data readout — purely decorative,
-               so it's fine that it has no relation to the actual track. -->
-          <canvas ref="globeCanvas" class="globe-accent" width="64" height="64" aria-hidden="true" />
-        </div>
-
-        <div class="now-playing-viz-wrap" :class="{ 'mode-glitch': modeTransitioning }">
-          <canvas ref="canvas" class="now-playing-viz" width="900" height="220" />
-          <button
-            type="button"
-            class="viz-mode-toggle hud-bracket"
-            :title="`Visualizer mode: ${vizModeLabel} (click to change)`"
-            @click="cycleVizMode"
-          >
-            {{ vizModeLabel }}
-          </button>
-          <div v-if="modeTransitioning" class="viz-recalibrating">
-            RECALIBRATING&hellip;
+        <div class="now-playing-body">
+          <!-- Smith-chart tunnel fly-through — decorative accent, occupies
+               the left portion only, never overlaps the readable info on
+               the right. Hidden below a width where there's no room for it
+               without crowding the real content. -->
+          <div ref="smithTunnelWrap" class="smith-tunnel-wrap" aria-hidden="true">
+            <canvas ref="smithTunnelCanvas" class="smith-tunnel-canvas" />
           </div>
-          <div class="viz-readout" aria-hidden="true">
-            <div v-for="(line, i) in readoutLines" :key="i">
-              {{ line }}
+
+          <div class="now-playing-main">
+            <div class="now-playing-art">
+              <img v-if="track.image" :src="track.image" :alt="track.title">
+              <img v-else src="@/shared/assets/fallback.svg" :alt="track.title">
+              <!-- Small ambient accent, not a data readout — purely decorative,
+                   so it's fine that it has no relation to the actual track. -->
+              <canvas ref="globeCanvas" class="globe-accent" width="64" height="64" aria-hidden="true" />
             </div>
+
+            <div class="now-playing-viz-wrap" :class="{ 'mode-glitch': modeTransitioning }">
+              <canvas ref="canvas" class="now-playing-viz" width="900" height="220" />
+              <button
+                type="button"
+                class="viz-mode-toggle hud-bracket"
+                :title="`Visualizer mode: ${vizModeLabel} (click to change)`"
+                @click="cycleVizMode"
+              >
+                {{ vizModeLabel }}
+              </button>
+              <div v-if="modeTransitioning" class="viz-recalibrating">
+                RECALIBRATING&hellip;
+              </div>
+              <div class="viz-readout" aria-hidden="true">
+                <div v-for="(line, i) in readoutLines" :key="i">
+                  {{ line }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Transport controls sit right under the visualizer, not buried
+                 at the bottom of the screen, so they're reachable without
+                 hunting or scrolling. -->
+            <div class="now-playing-controls">
+              <b-button variant="transparent" size="lg" title="Previous" @click="previous">
+                <Icon icon="skip-start" />
+              </b-button>
+              <b-button variant="transparent" size="lg" class="btn-play" title="Play/Pause (Space)" @click="playPause">
+                <Icon :icon="isPlaying ? 'pause' : 'play'" />
+              </b-button>
+              <b-button variant="transparent" size="lg" title="Next" @click="next">
+                <Icon icon="skip-end" />
+              </b-button>
+            </div>
+
+            <div class="now-playing-info">
+              <div class="now-playing-title text-truncate">
+                {{ streamTitle || track.title }}
+              </div>
+              <div class="now-playing-artist text-truncate">
+                <template v-if="track.artists.length > 0">
+                  <span v-for="(artist, index) in track.artists" :key="artist.id">
+                    <span v-if="index > 0">, </span>
+                    <router-link :to="{ name: 'artist', params: { id: artist.id } }">{{ artist.name }}</router-link>
+                  </span>
+                </template>
+                <template v-else-if="track.album">
+                  {{ track.album }}
+                </template>
+              </div>
+            </div>
+
+            <ProgressBar class="now-playing-progress" />
           </div>
         </div>
-
-        <!-- Transport controls sit right under the visualizer, not buried
-             at the bottom of the screen, so they're reachable without
-             hunting or scrolling. -->
-        <div class="now-playing-controls">
-          <b-button variant="transparent" size="lg" title="Previous" @click="previous">
-            <Icon icon="skip-start" />
-          </b-button>
-          <b-button variant="transparent" size="lg" class="btn-play" title="Play/Pause (Space)" @click="playPause">
-            <Icon :icon="isPlaying ? 'pause' : 'play'" />
-          </b-button>
-          <b-button variant="transparent" size="lg" title="Next" @click="next">
-            <Icon icon="skip-end" />
-          </b-button>
-        </div>
-
-        <div class="now-playing-info">
-          <div class="now-playing-title text-truncate">
-            {{ streamTitle || track.title }}
-          </div>
-          <div class="now-playing-artist text-truncate">
-            <template v-if="track.artists.length > 0">
-              <span v-for="(artist, index) in track.artists" :key="artist.id">
-                <span v-if="index > 0">, </span>
-                <router-link :to="{ name: 'artist', params: { id: artist.id } }">{{ artist.name }}</router-link>
-              </span>
-            </template>
-            <template v-else-if="track.album">
-              {{ track.album }}
-            </template>
-          </div>
-        </div>
-
-        <ProgressBar class="now-playing-progress" />
       </div>
     </template>
     <div v-else class="now-playing-empty">
@@ -100,6 +112,7 @@
 </template>
 <script lang="ts">
   import { defineComponent, markRaw } from 'vue'
+  import * as THREE from 'three'
   import ProgressBar from '@/player/ProgressBar.vue'
   import { usePlayerStore } from '@/player/store'
   import { formatArtists } from '@/shared/utils'
@@ -203,6 +216,64 @@
   const GLOBE_ROTATION_PERIOD_MS = 42000
   const GLOBE_TILT_RAD = 0.45
 
+  // Smith-chart tunnel fly-through (left-column accent, Now Playing screen
+  // only). Cross-section reproduces the Smith chart's constant-resistance
+  // circle family — circles of radius 1/(1+r) centered at (r/(1+r), 0),
+  // all tangent at x=radius — plus a fan of radial spokes from the origin,
+  // styled amber->cyan instead of the reference image's literal green.
+  const SMITH_TUNNEL_RESISTANCES = [0, 0.3, 0.7, 1.5, 3]
+  const SMITH_TUNNEL_CIRCLE_SEGMENTS = 40
+  const SMITH_TUNNEL_SPOKE_COUNT = 8
+  const SMITH_TUNNEL_SCALE = 3 // world units per chart unit
+  const SMITH_TUNNEL_STATION_SPACING = 5
+  const SMITH_TUNNEL_STATION_COUNT = 10
+  const SMITH_TUNNEL_SPEED = 3 // world units/sec camera travel
+
+  function pushLine(positions: number[], colors: number[], x0: number, y0: number, x1: number, y1: number, color: [number, number, number]) {
+    positions.push(x0, y0, 0, x1, y1, 0)
+    const [r, g, b] = color
+    colors.push(r / 255, g / 255, b / 255, r / 255, g / 255, b / 255)
+  }
+
+  // One tunnel "station" cross-section, in local XY (Z=0) — reused as shared
+  // geometry across every repeated station instance, so building the tunnel
+  // costs one geometry regardless of how many stations are in view.
+  function buildSmithStationGeometry(): THREE.BufferGeometry {
+    const positions: number[] = []
+    const colors: number[] = []
+
+    SMITH_TUNNEL_RESISTANCES.forEach((r, idx) => {
+      const cx = (r / (1 + r)) * SMITH_TUNNEL_SCALE
+      const rad = (1 / (1 + r)) * SMITH_TUNNEL_SCALE
+      const color = lerpColor(idx / (SMITH_TUNNEL_RESISTANCES.length - 1))
+      for (let seg = 0; seg < SMITH_TUNNEL_CIRCLE_SEGMENTS; seg++) {
+        const a0 = (seg / SMITH_TUNNEL_CIRCLE_SEGMENTS) * Math.PI * 2
+        const a1 = ((seg + 1) / SMITH_TUNNEL_CIRCLE_SEGMENTS) * Math.PI * 2
+        pushLine(
+          positions, colors,
+          cx + Math.cos(a0) * rad, Math.sin(a0) * rad,
+          cx + Math.cos(a1) * rad, Math.sin(a1) * rad,
+          color,
+        )
+      }
+    })
+
+    for (let i = 0; i < SMITH_TUNNEL_SPOKE_COUNT; i++) {
+      const angle = (i / SMITH_TUNNEL_SPOKE_COUNT) * Math.PI * 2
+      pushLine(
+        positions, colors,
+        0, 0,
+        Math.cos(angle) * SMITH_TUNNEL_SCALE, Math.sin(angle) * SMITH_TUNNEL_SCALE,
+        lerpColor(0.5),
+      )
+    }
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    return geometry
+  }
+
   export default defineComponent({
     components: {
       ProgressBar,
@@ -246,6 +317,20 @@
         // Real facts about the running audio graph (sampleRate/fftSize),
         // fetched once the audio pipeline exists — never fabricated.
         audioInfo: { sampleRate: 0, fftSize: 0 },
+        // Smith-chart tunnel (Three.js) — its own independent render loop
+        // and renderer, entirely separate from the 2D canvas draw() loop
+        // above. Non-reactive: markRaw avoids wrapping Three.js internals
+        // in Vue's reactivity proxy, which is both wasteful and unsafe for
+        // objects Three.js mutates internally.
+        smithTunnelRenderer: null as THREE.WebGLRenderer | null,
+        smithTunnelScene: null as THREE.Scene | null,
+        smithTunnelCamera: null as THREE.PerspectiveCamera | null,
+        smithTunnelGeometry: null as THREE.BufferGeometry | null,
+        smithTunnelMaterial: null as THREE.LineBasicMaterial | null,
+        smithTunnelStations: markRaw([] as THREE.LineSegments[]),
+        smithTunnelResizeObserver: null as ResizeObserver | null,
+        smithTunnelFrame: 0 as number,
+        smithTunnelLastTime: 0,
       }
     },
     computed: {
@@ -295,6 +380,7 @@
       this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       this.audioInfo = this.playerStore.getAudioInfo()
       this.draw()
+      this.initSmithTunnel()
       window.addEventListener('keydown', this.onKeydown)
       if (!this.reducedMotion) {
         window.addEventListener('mousemove', this.onMousemove)
@@ -307,6 +393,7 @@
       }
       window.removeEventListener('keydown', this.onKeydown)
       window.removeEventListener('mousemove', this.onMousemove)
+      this.disposeSmithTunnel()
     },
     methods: {
       playPause() {
@@ -343,6 +430,105 @@
       onMousemove(event: MouseEvent) {
         this.parallaxX = (event.clientX / window.innerWidth - 0.5) * 2
         this.parallaxY = (event.clientY / window.innerHeight - 0.5) * 2
+      },
+      initSmithTunnel() {
+        const canvas = this.$refs.smithTunnelCanvas as HTMLCanvasElement | undefined
+        const wrap = this.$refs.smithTunnelWrap as HTMLElement | undefined
+        if (!canvas || !wrap) {
+          return
+        }
+
+        const renderer = markRaw(new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true }))
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+        const scene = markRaw(new THREE.Scene())
+        scene.fog = new THREE.Fog(0x050200, SMITH_TUNNEL_STATION_SPACING * 1.5, SMITH_TUNNEL_STATION_COUNT * SMITH_TUNNEL_STATION_SPACING * 0.85)
+
+        const camera = markRaw(new THREE.PerspectiveCamera(
+          62, 1, 0.1, SMITH_TUNNEL_STATION_COUNT * SMITH_TUNNEL_STATION_SPACING + 20,
+        ))
+        camera.position.set(0, 0, SMITH_TUNNEL_STATION_SPACING)
+
+        const geometry = markRaw(buildSmithStationGeometry())
+        const material = markRaw(new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.85,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }))
+
+        const stations: THREE.LineSegments[] = []
+        for (let i = 0; i < SMITH_TUNNEL_STATION_COUNT; i++) {
+          const station = markRaw(new THREE.LineSegments(geometry, material))
+          station.position.z = -i * SMITH_TUNNEL_STATION_SPACING
+          scene.add(station)
+          stations.push(station)
+        }
+
+        this.smithTunnelRenderer = renderer
+        this.smithTunnelScene = scene
+        this.smithTunnelCamera = camera
+        this.smithTunnelGeometry = geometry
+        this.smithTunnelMaterial = material
+        this.smithTunnelStations = markRaw(stations)
+
+        this.resizeSmithTunnel()
+        this.smithTunnelResizeObserver = new ResizeObserver(() => this.resizeSmithTunnel())
+        this.smithTunnelResizeObserver.observe(wrap)
+
+        this.smithTunnelLastTime = performance.now()
+        this.smithTunnelFrame = requestAnimationFrame(this.drawSmithTunnel)
+      },
+      resizeSmithTunnel() {
+        const wrap = this.$refs.smithTunnelWrap as HTMLElement | undefined
+        const renderer = this.smithTunnelRenderer
+        const camera = this.smithTunnelCamera
+        if (!wrap || !renderer || !camera) {
+          return
+        }
+        const width = wrap.clientWidth
+        const height = wrap.clientHeight
+        if (width === 0 || height === 0) {
+          return
+        }
+        renderer.setSize(width, height, false)
+        camera.aspect = width / height
+        camera.updateProjectionMatrix()
+      },
+      drawSmithTunnel(now: number) {
+        this.smithTunnelFrame = requestAnimationFrame(this.drawSmithTunnel)
+        const renderer = this.smithTunnelRenderer
+        const scene = this.smithTunnelScene
+        const camera = this.smithTunnelCamera
+        if (!renderer || !scene || !camera) {
+          return
+        }
+        const dt = Math.min((now - this.smithTunnelLastTime) / 1000, 0.1)
+        this.smithTunnelLastTime = now
+
+        if (!this.reducedMotion) {
+          camera.position.z -= SMITH_TUNNEL_SPEED * dt
+          const wrapAt = SMITH_TUNNEL_STATION_COUNT * SMITH_TUNNEL_STATION_SPACING
+          this.smithTunnelStations.forEach((station) => {
+            if (station.position.z > camera.position.z + SMITH_TUNNEL_STATION_SPACING) {
+              station.position.z -= wrapAt
+            }
+          })
+        }
+
+        if (renderer.domElement.clientWidth === 0) {
+          return
+        }
+        renderer.render(scene, camera)
+      },
+      disposeSmithTunnel() {
+        cancelAnimationFrame(this.smithTunnelFrame)
+        this.smithTunnelResizeObserver?.disconnect()
+        this.smithTunnelResizeObserver = null
+        this.smithTunnelGeometry?.dispose()
+        this.smithTunnelMaterial?.dispose()
+        this.smithTunnelRenderer?.dispose()
+        this.smithTunnelStations = markRaw([])
       },
       parallaxStyle(depth: number) {
         if (this.reducedMotion) {
@@ -1127,6 +1313,44 @@
   }
   .now-playing-back:hover {
     color: var(--term-amber);
+  }
+
+  .now-playing-body {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 1.5rem;
+    width: 100%;
+  }
+
+  .now-playing-main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Smith-chart tunnel fly-through — decorative, left column only.
+     Hidden below ~820px where there's no room for it without crowding
+     the readable content on the right. */
+  .smith-tunnel-wrap {
+    position: relative;
+    flex: 0 0 42%;
+    max-width: 480px;
+    border: 1px solid var(--term-amber-dim);
+    overflow: hidden;
+    display: none;
+  }
+  .smith-tunnel-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  @media (min-width: 820px) {
+    .smith-tunnel-wrap {
+      display: block;
+    }
   }
 
   .now-playing-art {
